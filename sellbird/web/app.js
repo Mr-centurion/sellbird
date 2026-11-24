@@ -1479,18 +1479,14 @@ async function loadLogs() {
 // Calls today per subscription — each labelled with the provider it ran on.
 function brainCallChips(data) {
   const chip = (label, n) => '<span class="chip">' + label + ' calls today <b>' + escHtml(String(n || 0)) + '</b></span>';
-  const codex = data.codex_calls_today || 0;
+  const calls = data.usage_today || data.brain_calls_today || 0;
   const st = data.brain_status || {};
-  // A paused brain must not look healthy: say so, and why.
   const paused = st.status === 'paused'
     ? '<span class="chip" title="' + escHtml(st.reason || '') + '">' +
-      escHtml(st.provider === 'codex' ? 'Codex' : 'Brain') + ' <b>paused</b>: ' +
+      'Brain <b>paused</b>: ' +
       escHtml((st.reason || '').slice(0, 120)) + '</span>'
     : '';
-  if (data.brain_provider === 'codex') {
-    return paused + chip('Codex', codex) + (data.claude_calls_today ? chip('Claude', data.claude_calls_today) : '');
-  }
-  return paused + chip('Claude', data.claude_calls_today) + (codex ? chip('Codex', codex) : '');
+  return paused + chip('Ollama', calls);
 }
 
 function fmtTokens(n) {
@@ -1512,20 +1508,9 @@ function emailTag(p) {
     escHtml(m.label) + '</span>';
 }
 
-// Quota gauges for the ACTIVE provider only: Claude's are the numbers
-// `/usage` shows in Claude Code; Codex's are the ChatGPT plan's limits.
-// When they can't be read, say so rather than hiding the card.
 function quotaCardHtml(data) {
-  const provider = data && data.quota_provider;
-  if (!provider) return '';
-  const title = provider === 'codex' ? 'Codex (ChatGPT plan) Quota' : 'Claude Subscription Quota';
-  let html = '<h2>' + escHtml(title) + '</h2>';
-  if (!data.quota || !Object.keys(data.quota).length) {
-    const why = provider === 'codex'
-      ? "Quota unavailable: Sellbird couldn't read your ChatGPT plan's limits (check codex login, the Codex CLI version, and network)."
-      : "Quota unavailable: Sellbird couldn't read your Claude subscription's limits (check claude login and network).";
-    return html + '<p class="muted">' + escHtml(why) + ' Until it can, budgets count Sellbird\'s own calls.</p>';
-  }
+  return '';
+}
   const labels = {five_hour: '5-hour window', seven_day: 'Weekly', primary: 'Primary window',
                   secondary: 'Secondary window', limit_reached: 'Usage limit reached'};
   for (const [key, w] of Object.entries(data.quota)) {
@@ -1609,10 +1594,10 @@ async function loadUsage() {
   const anyRows = (data.by_agent || []).length || (data.by_task || []).length;
   if (!anyRows) {
     tablesEl.innerHTML = emptyState(icon('usage'), 'No usage recorded yet',
-      'Once Sellbird starts making model calls (Claude or Codex), every one is logged here with exact calls and tokens by provider, agent and task.');
+      'Once Sellbird starts making model calls, every one is logged here with exact calls and tokens by provider, agent and task.');
   } else {
     const providers = data.by_provider || [];
-    const showProviders = providers.length > 1 || (providers.length === 1 && providers[0].provider !== 'claude');
+    const showProviders = providers.length > 1;
     tablesEl.innerHTML =
       (showProviders ? table('By Provider (30 days)', providers, 'Provider') : '') +
       table('By Agent (30 days)', data.by_agent, 'Agent') +

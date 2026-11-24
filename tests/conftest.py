@@ -1,11 +1,6 @@
 """Shared test setup.
 
-Brain's Claude path checks the installed CLI's ``--help`` before sending a
-prompt (sellbird/claude_runtime.py). Unit tests stub the subprocess itself, so
-they also get a stand-in CLI here: found as plain ``claude``, with a help
-text listing every isolation flag. Tests of the check itself override these,
-and ``@pytest.mark.real_claude_cli`` tests use the real installed CLI. This
-lives in tests/ only; the shipped package has no way to skip the check.
+# Unit tests run without real models or network calls.
 """
 
 import os
@@ -17,14 +12,9 @@ os.environ.pop("SELLBIRD_HOME", None)
 
 import pytest  # noqa: E402
 
-from sellbird import claude_runtime  # noqa: E402
-
-FAKE_HELP = "\n".join(f"  {flag} <value>   test" for flag in claude_runtime.REQUIRED_FLAGS)
-
 
 def pytest_configure(config):
-    config.addinivalue_line(
-        "markers", "real_claude_cli: runs the installed Claude CLI (no stand-in)")
+    pass
 
 
 @pytest.fixture(autouse=True)
@@ -35,19 +25,6 @@ def _private_dashboard_token(tmp_path_factory):
     dash.token_store.configure(tmp_path_factory.mktemp("token") / "dashboard-token")
     yield
     dash.token_store.configure(dash.TOKEN_FILE)
-
-
-@pytest.fixture(autouse=True)
-def _stand_in_claude_cli(request, monkeypatch):
-    claude_runtime.clear_cache()
-    if request.node.get_closest_marker("real_claude_cli"):
-        yield
-        claude_runtime.clear_cache()
-        return
-    monkeypatch.setattr(claude_runtime, "find_claude", lambda env=None: "claude")
-    monkeypatch.setattr(claude_runtime, "_probe_help", lambda exe: FAKE_HELP)
-    yield
-    claude_runtime.clear_cache()
 
 
 import sellbird.humanize  # noqa: E402
@@ -67,3 +44,6 @@ def _no_home_seeding(monkeypatch):
     import sellbird.home
 
     monkeypatch.setattr(sellbird.home, "seed_home", lambda home, source: [])
+
+
+from tests.fake_ollama import fake_ollama, FakeOllamaServer  # noqa: E402, F401

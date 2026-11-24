@@ -19,7 +19,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
-FAKE = Path(__file__).with_name("fake_codex.py")
+FAKE = Path(__file__).with_name("fake_ollama.py")
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("SELLBIRD_PACKAGE_TESTS") != "1" or sys.platform == "win32",
@@ -35,10 +35,11 @@ CHECK = textwrap.dedent('''
     sys.meta_path[:] = [f for f in sys.meta_path
                         if "editable" not in type(f).__name__.lower()
                         and "editable" not in getattr(f, "__module__", "")]
-    import sellbird, sellbird.codex as hc
+    import sellbird
     from sellbird.brain import Brain
     from sellbird.config import BrainConfig
     from sellbird.state import StateManager
+    from sellbird.ollama_runtime import OllamaClient
     assert os.path.realpath(sellbird.__file__).startswith(os.path.realpath(SITE)), sellbird.__file__
 
     def cli(*argv):
@@ -97,7 +98,7 @@ CHECK = textwrap.dedent('''
     asyncio.run(main())
     assert os.listdir(tempfile.tempdir) == []
     import sellbird.dashboard as dash
-    from sellbird import claude_runtime  # noqa: F401
+    from sellbird import ollama_runtime  # noqa: F401
     web = os.path.join(os.path.dirname(sellbird.__file__), "web")
     assert os.path.exists(os.path.join(web, "app.js"))
     assert os.path.exists(os.path.join(web, "auth.js"))

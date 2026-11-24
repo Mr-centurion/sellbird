@@ -33,5 +33,4 @@ def test_stats_use_local_day_when_sqlite_utc_day_differs(client, monkeypatch, of
     response = client.get("/api/stats")
     assert response.status_code == 200
     stats = response.json()
-    assert stats["claude_calls_today"] == 3
-    assert stats["codex_calls_today"] == 7
+    assert stats["brain_calls_today"] == 3

@@ -1,4 +1,4 @@
-"""Sellbird — the open-source outreach platform that runs on your Claude or Codex subscription."""
+"""Sellbird — the open-source outreach platform that runs locally with Ollama."""
 
 import sys
 

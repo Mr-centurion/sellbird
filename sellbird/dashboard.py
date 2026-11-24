@@ -303,7 +303,7 @@ async def get_setup_status():
         "id": "config", "label": f"Sellbird configured ({config_path.name})",
         "done": config_valid,
         "required": True,
-        "help": "Train Sellbird on your product. Use the trainer or set up manually through Claude.",
+        "help": "Train Sellbird on your product. Use the trainer or set up manually.",
     })
 
     # 6. Product trained
@@ -312,7 +312,7 @@ async def get_setup_status():
         "id": "product_trained", "label": "Product knowledge trained",
         "done": product_trained,
         "required": True,
-        "help": "Run: sellbird train https://yourwebsite.com (or set up through Claude).",
+        "help": "Run: sellbird train https://yourwebsite.com (or set up manually).",
     })
 
     # 7. LinkedIn (optional)
@@ -893,11 +893,9 @@ async def start_sellbird():
     # Ensure data dir exists
     (PROJECT_ROOT / "data").mkdir(parents=True, exist_ok=True)
 
-    # The native Claude CLI installer puts claude in ~/.local/bin without
-    # always adding it to PATH; the heartbeat can't think without it.
     env = os.environ.copy()
     local_bin = Path.home() / ".local" / "bin"
-    if not shutil.which("claude") and local_bin.is_dir():
+    if local_bin.is_dir():
         env["PATH"] = str(local_bin) + os.pathsep + env.get("PATH", "")
 
     try:
@@ -1068,8 +1066,8 @@ async def get_stats():
             "conversations": {"total": sum(convo_map.values()), "by_status": convo_map},
             "pipeline": pipeline,
             "actions_total": action_count,
-            "claude_calls_today": usage_today,
-            "codex_calls_today": codex_today,
+            "usage_today": usage_today,
+            "brain_calls_today": usage_today,
             "brain_provider": _active_provider(),
             "brain_status": await _brain_status(),
         }
@@ -1099,12 +1097,9 @@ def _active_brain():
 
 
 async def _brain_status() -> dict:
-    """Last recorded brain health transition ({} if none): lets the
-    dashboard say "Codex paused: <why>" instead of looking healthy."""
+    """Last recorded brain health transition ({} if none)."""
     from sellbird.brain import BRAIN_STATUS_KEY, active_brain_status
     rows = await query_db("SELECT value FROM settings WHERE key = ?", (BRAIN_STATUS_KEY,))
-    # Only the configured provider's health (a stale Codex pause isn't
-    # Claude's).
     return active_brain_status(rows[0]["value"], _active_provider()) if rows else {}
 
 
@@ -1114,20 +1109,7 @@ def _active_provider() -> str:
 
 
 def _quota_client_for(provider: str, model: str = ""):
-    """One cached quota reader per provider (and Codex model). Each reads
-    only its own subscription, so a Claude gauge is never shown as Codex or
-    vice versa, and Codex shows the bucket metering the configured model."""
-    key = (provider, model if provider == "codex" else "")
-    if key not in _quota_clients:
-        if provider == "codex":
-            from sellbird.codex import CodexClient, CodexQuotaClient
-            _quota_clients[key] = CodexQuotaClient(CodexClient(model=model))
-        elif provider == "claude":
-            from sellbird.integrations.quota import QuotaClient
-            _quota_clients[key] = QuotaClient()
-        else:
-            return None
-    return _quota_clients[key]
+    return None
 
 
 @app.get("/api/usage")
@@ -2426,7 +2408,7 @@ async def get_today():
         # Ordered by how much it blocks Sellbird from doing anything at all.
         brain = await _brain_status()
         if brain.get("status") == "paused":
-            who = "Codex" if brain.get("provider") == "codex" else "Sellbird's model"
+            who = "Ollama"
             items.append({
                 "key": "brain-paused", "tone": "bad",
                 "title": f"{who} is paused, so Sellbird is waiting",

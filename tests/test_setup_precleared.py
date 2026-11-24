@@ -483,7 +483,6 @@ async def test_setup_trains_into_the_file_sellbird_reads(files, monkeypatch, has
 
 
 async def summary(wizard, monkeypatch, capsys) -> str:
-    monkeypatch.setattr(setup, "_check_claude_cli", lambda: True)
     capsys.readouterr()
     await wizard._print_summary()
     return capsys.readouterr().out

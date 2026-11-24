@@ -8,7 +8,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import date as _date, time as _time
 from pathlib import Path
-from typing import Iterator
+from typing import Any, Iterator
 
 import yaml
 
@@ -272,7 +272,7 @@ class EmailChannelConfig(BaseModel):
     send_to_risky: bool = False
     # Don't write for prospects scored below this (0-100, Scout's fit
     # score). 0, the default, writes for everyone with a deliverable
-    # address, as before. Raising it keeps Claude calls (and sends) for the
+    # address, as before. Raising it keeps Brain calls (and sends) for the
     # prospects that match the ICP best.
     min_write_score: int = 0
     # Native providers queue mail for approval. Instantly cannot use that
@@ -677,15 +677,24 @@ class QuietHoursConfig(BaseModel):
 
 
 class UsageConfig(BaseModel):
-    max_daily_claude_percent: float = 80.0
+    max_daily_percent: float = 80.0
     heartbeat_interval_minutes: int = 15
     quiet_hours: QuietHoursConfig = QuietHoursConfig()
 
-    @field_validator("max_daily_claude_percent")
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_keys(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            for k in list(data.keys()):
+                if k.startswith("max_daily_") and k.endswith("_percent") and k != "max_daily_percent":
+                    data["max_daily_percent"] = data[k]
+        return data
+
+    @field_validator("max_daily_percent")
     @classmethod
     def _valid_percent(cls, v: float) -> float:
         if not 0 < v <= 100:
-            raise ValueError("max_daily_claude_percent must be between 0 and 100")
+            raise ValueError("max_daily_percent must be between 0 and 100")
         return v
 
     @field_validator("heartbeat_interval_minutes")
@@ -695,32 +704,31 @@ class UsageConfig(BaseModel):
             raise ValueError("heartbeat_interval_minutes must be at least 1")
         return v
 
+    def __getattr__(self, name: str) -> Any:
+        if name.startswith("max_daily_") and name.endswith("_percent"):
+            return self.max_daily_percent
+        raise AttributeError(f"{type(self).__name__} has no attribute {name!r}")
 
-BRAIN_PROVIDERS = ("claude", "codex")
-CODEX_REASONING_EFFORTS = ("minimal", "low", "medium", "high", "xhigh")
 
-# Model names are passed to a CLI, so they must look like a model name and
-# never like a flag ("-x") or anything a shell would treat specially.
+BRAIN_PROVIDERS = ("ollama",)
+
+# Model names are validated to avoid injection or shell flags.
 _MODEL_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/\[\]-]{0,127}$")
 
 
 class BrainConfig(BaseModel):
-    """Which subscription Sellbird thinks with.
+    """Which engine Sellbird thinks with. Runs Ollama locally on open-weight models."""
 
-    ``claude`` (default) runs Claude Code headless on your Claude plan.
-    ``codex`` runs Codex on your ChatGPT plan. There is never an automatic
-    fallback between them, and an explicit ``model`` only affects Sellbird —
-    your own Claude Code / Codex settings are never read or changed.
-    """
-
-    provider: str = "claude"
-    model: str = ""  # empty = the provider's own default
-    reasoning_effort: str = ""  # codex only; empty = model default
+    provider: str = "ollama"
+    model: str = "qwen3:1.7b"
+    ollama_url: str = "http://localhost:11434"
+    num_ctx: int = 4096
+    reasoning_effort: str = ""
 
     @field_validator("provider", mode="before")
     @classmethod
     def _valid_provider(cls, v) -> str:
-        v = str(v or "claude").strip().lower()
+        v = str(v or "ollama").strip().lower()
         if v not in BRAIN_PROVIDERS:
             raise ValueError(
                 f"'{v}' is not a supported brain provider. "
@@ -731,28 +739,33 @@ class BrainConfig(BaseModel):
     @field_validator("model", mode="before")
     @classmethod
     def _valid_model(cls, v) -> str:
-        v = str(v or "").strip()
+        v = str(v or "qwen3:1.7b").strip()
         if v and not _MODEL_NAME_RE.match(v):
             raise ValueError(f"'{v}' is not a valid model name.")
         return v
 
-    @field_validator("reasoning_effort", mode="before")
+    @field_validator("ollama_url", mode="before")
     @classmethod
-    def _valid_effort(cls, v) -> str:
-        v = str(v or "").strip().lower()
-        if v and v not in CODEX_REASONING_EFFORTS:
-            raise ValueError(
-                f"'{v}' is not a valid reasoning effort. "
-                f"Use one of: {', '.join(CODEX_REASONING_EFFORTS)}."
-            )
+    def _valid_url(cls, v) -> str:
+        v = str(v or "http://localhost:11434").strip()
         return v
+
+    @field_validator("num_ctx", mode="before")
+    @classmethod
+    def _valid_num_ctx(cls, v) -> int:
+        try:
+            val = int(v)
+            if val <= 0:
+                raise ValueError
+            return val
+        except Exception:
+            raise ValueError("num_ctx must be a positive integer.")
 
 
 class WriterConfig(BaseModel):
     # Run every draft through one extra editing-only brain call using the
-    # Humanizer skill's instructions (~/.claude/skills/humanizer/SKILL.md,
-    # or SELLBIRD_HUMANIZER_SKILL). Off by default: installing the skill for
-    # your own Claude Code use never changes what Sellbird sends on its own.
+    # Humanizer skill's instructions (~/.sellbird/skills/humanizer/SKILL.md,
+    # or SELLBIRD_HUMANIZER_SKILL). Off by default.
     humanizer: bool = False
     # Your own rules for the emails Sellbird drafts, as a markdown file:
     # length, structure, what to say about the product, links, subject lines,
@@ -961,7 +974,7 @@ def load_brain_config(config_path: str | None = None) -> BrainConfig:
 
     Training runs before a product is configured (the template sellbird.yaml
     still has placeholder values), but it must still think with the
-    provider the user chose. A missing file or section means the Claude
+    provider the user chose. A missing file or section means the Ollama
     default; an invalid section raises rather than silently switching
     providers.
     """

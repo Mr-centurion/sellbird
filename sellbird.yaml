@@ -101,8 +101,14 @@ channels:
     max_daily_connections: 20
     max_daily_messages: 10
 
+brain:
+  provider: "ollama"
+  model: "qwen3:1.7b"
+  ollama_url: "http://localhost:11434"
+  num_ctx: 4096
+
 usage:
-  max_daily_claude_percent: 80
+  max_daily_percent: 80
   heartbeat_interval_minutes: 15
   quiet_hours:
     start: "22:00"

@@ -107,7 +107,7 @@ BOOKING_HINTS = (r"calendly\.com", r"acuityscheduling", r"schedulicity",
                  r"schedule[-_]?(an?[-_])?(appointment|estimate|consultation)",
                  r"housecallpro", r"getjobber\.com", r"servicetitan")
 
-AI_CRAWLERS = ("gptbot", "google-extended", "ccbot", "anthropic-ai", "claudebot",
+AI_CRAWLERS = ("gptbot", "google-extended", "ccbot", "cohere-ai",
                "perplexitybot", "bytespider")
 
 TEAM_PATHS = ("/team", "/about", "/about-us", "/our-team", "/staff",

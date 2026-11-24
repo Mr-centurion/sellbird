@@ -1,8 +1,8 @@
 """Scout — DIY prospecting without expensive tools.
 
-Architecture: Python does ALL web searching/scraping. Claude only
+Architecture: Python does ALL web searching/scraping. The Brain only
 analyzes, scores, and personalizes data that Python already found.
-This avoids model-level refusals when asking Claude to research
+This avoids model-level refusals when researching
 real people/companies.
 
 Search backends (in priority order):
@@ -913,7 +913,7 @@ class Scout:
     async def _prospect_via_company_discovery(self) -> int:
         """Find companies via multiple methods, scrape team pages for contacts.
 
-        Python does ALL the searching and scraping. Claude only scores/personalizes
+        Python does ALL the searching and scraping. The Brain only scores/personalizes
         the contacts that Python already found.
         """
         logger.info("Scout: Discovering companies...")
@@ -991,7 +991,7 @@ class Scout:
             logger.info("Scout: No ICP-matching contacts found on team pages.")
             return 0
 
-        # Use Claude to score/personalize, with a Python heuristic fallback.
+        # Use the Brain to score/personalize, with a Python heuristic fallback.
         scored_contacts = await self._score_contacts(all_contacts)
 
         count = 0
@@ -1237,9 +1237,9 @@ class Scout:
         return result.email, result.status
 
     async def _score_contacts(self, contacts: list[Prospect]) -> list[Prospect]:
-        """Use Claude to score and add personalization notes to found contacts.
+        """Use the Brain to score and add personalization notes to found contacts.
 
-        Falls back to a deterministic Python heuristic if Claude is
+        Falls back to a deterministic Python heuristic if the Brain is
         unavailable or returns malformed output, so scoring never blocks
         prospecting.
         """
@@ -1288,7 +1288,7 @@ Respond ONLY with the JSON array."""
                 agent="scout", task="score_contacts",
             )
         except Exception as e:
-            logger.warning(f"Scout: Claude scoring errored ({e}); using heuristic scores.")
+            logger.warning(f"Scout: Brain scoring errored ({e}); using heuristic scores.")
             result = None
 
         if isinstance(result, list):
@@ -1309,7 +1309,7 @@ Respond ONLY with the JSON array."""
                     if isinstance(note, str):
                         contacts[idx].personalization_notes = note.strip()[:500]
         else:
-            logger.warning("Scout: Claude scoring failed, using heuristic scores.")
+            logger.warning("Scout: Brain scoring failed, using heuristic scores.")
 
         contacts = [c for c in contacts if c.score >= 30]
         contacts.sort(key=lambda c: c.score, reverse=True)

@@ -320,7 +320,7 @@
 
 <!-- Usage -->
 <div id="usage" class="section">
-  <div class="section-head"><div><h2>Usage</h2><p>Model usage on your subscription (Claude or Codex): calls and tokens by provider, agent and task. Subscription plans aren't billed per token, so there are no dollar costs here.</p></div></div>
+  <div class="section-head"><div><h2>Usage</h2><p>Model usage on local Ollama: calls and tokens by provider, agent and task. Running locally is completely free and unmetered.</p></div></div>
   <div id="usage-quota" class="card" style="display:none"></div>
   <div class="stats-grid" id="usage-stats"></div>
   <div class="card" id="usage-daily" style="display:none"></div>
@@ -506,7 +506,7 @@
   <div class="help-section">
     <h2>What is Sellbird?</h2>
     <p>Sellbird is an open-source outreach platform. Once set up, Sellbird runs on its own: finds people who match your ideal customer, writes personalized cold emails, sends them through your email platform, reads every reply, handles objections, and works toward booking a meeting. You review everything through this dashboard.</p>
-    <p>Sellbird runs on your Claude Max subscription (or, if you opt in, your ChatGPT plan through Codex), so there are no extra AI costs. Everything stays on your machine in one folder.</p>
+    <p>Sellbird runs locally on open-weight models via Ollama, so there are no cloud AI costs. Everything stays on your machine in one folder.</p>
   </div>
 
   <div class="help-section">
@@ -518,7 +518,7 @@
     <h2>Getting started</h2>
     <p>There are three things to do:</p>
     <pre>1. Go to the Settings tab and connect an email provider (Gmail recommended)
-2. Train Sellbird on your product (through Claude or the command line)
+2. Train Sellbird on your product (through the trainer or the command line)
 3. Go to the Controls tab and click Start</pre>
     <p>Today shows exactly what's done and what still needs to happen.</p>
   </div>
@@ -588,13 +588,8 @@
     </details>
 
     <details>
-      <summary>Claude headless mode fails</summary>
-      <div class="faq-body">Make sure you've run <code>claude login</code> in your terminal and have an active Claude Max subscription. Sellbird uses your existing subscription, not a separate API key.</div>
-    </details>
-
-    <details>
-      <summary>Codex calls fail</summary>
-      <div class="faq-body">With <code>brain.provider: codex</code>, set <code>brain.model</code> to an available model ID, including Luna, Sol, or Terra (for example <code>gpt-6.1-sol</code>), or leave it blank to select a listed model. Sellbird runs these models without tools; <code>gpt-5.5</code> also remains supported when present in your account's catalog. Run <code>codex login</code> and choose "Sign in with ChatGPT" (API-key logins are refused). Sellbird never renews your Codex login: if the log says it has expired or is due for renewal, use Codex once or run <code>codex login</code>. Sellbird needs Codex CLI 0.159.3 on macOS or Linux (Codex isn't supported on Windows; use Claude there) and refuses other versions. While Codex can't be used, Sellbird pauses (Today shows "Codex is paused" and why), leaves replies and queued emails untouched, and resumes once it's fixed; <code>sellbird status --check</code> checks on demand. If the log says isolation could not be verified, a Codex config layer is forcing a tool, hook, MCP server or custom endpoint back on — Sellbird refuses to send prompts until it is removed. Sellbird never falls back to Claude on its own.</div>
+      <summary>Ollama inference fails</summary>
+      <div class="faq-body">Make sure Ollama is running (<code>ollama serve</code>) and that your configured model is downloaded (<code>ollama pull qwen3:1.7b</code>). Use <code>sellbird status --check</code> to verify reachability.</div>
     </details>
 
     <details>

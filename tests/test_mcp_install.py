@@ -655,14 +655,6 @@ def test_print_config_writes_nothing(tmp_path, capsys):
     assert json.loads(first_json) == {"mcpServers": {"sellbird": mi.server_entry()}}
 
 
-def test_brain_codex_home_is_still_private():
-    from sellbird.codex import build_private_config_toml
-
-    text = build_private_config_toml()
-    assert "sellbird" not in text
-    assert "mcp_servers" not in text
-
-
 # ── private temp and backup files, parse before backup ──
 
 def test_bad_json_at_apply_time_leaves_no_backup(tmp_path):

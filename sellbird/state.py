@@ -558,10 +558,24 @@ MIGRATIONS: list[str] = [
     ALTER TABLE conversations ADD COLUMN mailbox_id TEXT DEFAULT '';
     CREATE INDEX IF NOT EXISTS idx_outbox_mailbox_sent ON outbox(mailbox_id, status, sent_at);
     """,
+    """
+    CREATE TABLE IF NOT EXISTS inference_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ts TEXT NOT NULL,
+        agent TEXT,
+        task TEXT,
+        model TEXT NOT NULL,
+        host TEXT NOT NULL,
+        prompt_tokens INTEGER,
+        output_tokens INTEGER,
+        latency_ms INTEGER,
+        status TEXT NOT NULL
+    );
+    """,
 ]
 
-BRAIN_PROVIDERS = ("claude", "codex")
-_USAGE_LOG_COLUMN = {"claude": "claude_calls", "codex": "codex_calls"}
+BRAIN_PROVIDERS = ("ollama",)
+_USAGE_LOG_COLUMN = {"ollama": "claude_calls"}
 
 # When a company was last profiled: the newer of the explicit check stamp
 # (set on every attempt, reachable or not) and its latest profile observation
@@ -2607,9 +2621,9 @@ class StateManager:
 
     # ── Usage Tracking ──
 
-    async def get_usage_today(self, provider: str = "claude") -> int:
+    async def get_usage_today(self, provider: str = "ollama") -> int:
         """Brain calls made today on one provider's subscription."""
-        column = _USAGE_LOG_COLUMN[provider]
+        column = _USAGE_LOG_COLUMN.get(provider, "claude_calls")
         today = date.today().isoformat()
         async with self._connect() as db:
             async with db.execute(
@@ -2618,8 +2632,8 @@ class StateManager:
                 row = await cursor.fetchone()
                 return (row[0] or 0) if row else 0
 
-    async def increment_usage(self, provider: str = "claude"):
-        column = _USAGE_LOG_COLUMN[provider]
+    async def increment_usage(self, provider: str = "ollama"):
+        column = _USAGE_LOG_COLUMN.get(provider, "claude_calls")
         today = date.today().isoformat()
         async with self._connect() as db:
             await db.execute(
@@ -2650,7 +2664,7 @@ class StateManager:
         is_error: bool = False,
         source: str = "result_json",
         created_at: str | None = None,
-        provider: str = "claude",
+        provider: str = "ollama",
     ) -> bool:
         """Insert one usage row (one model within one brain call).
 
@@ -2802,11 +2816,11 @@ class StateManager:
             "sending_paused": bool(await self.get_setting("sending_paused")),
             "open_conversations": open_conversations,
             "auto_reply_handoffs": auto_reply_handoffs,
-            "usage_today": usage_today,  # Claude calls (kept for compatibility)
-            "usage_today_by_provider": {"claude": usage_today, "codex": codex_today},
+            "usage_today": usage_today,
+            "usage_today_by_provider": {"ollama": usage_today, "claude": usage_today, "codex": codex_today},
             # Companies discovered but not yet read. The heartbeat profiles
             # these every cycle — it is free, so it never competes with the
-            # Claude budget the rest of the loop is rationing.
+            # model call budget the rest of the loop is rationing.
             "unprofiled": await self.count_companies_needing_profile(),
         }
 

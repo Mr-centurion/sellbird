@@ -31,10 +31,10 @@ LEARNED = {
         "linkedin": {"enabled": True, "max_daily_connections": 20, "max_daily_messages": 10},
     },
     "usage": {
-        "max_daily_claude_percent": 80, "heartbeat_interval_minutes": 15,
+        "max_daily_percent": 80, "heartbeat_interval_minutes": 15,
         "quiet_hours": {"start": "22:00", "end": "07:00", "timezone": "America/New_York"},
     },
-    "brain": {"provider": "claude"},
+    "brain": {"provider": "ollama", "model": "qwen3:1.7b"},
 }
 
 # A config someone trained before and then tuned by hand.
@@ -61,10 +61,10 @@ TUNED = {
         "linkedin": {"enabled": False, "max_daily_connections": 5, "max_daily_messages": 2},
     },
     "usage": {
-        "max_daily_claude_percent": 40, "heartbeat_interval_minutes": 30,
+        "max_daily_percent": 40, "heartbeat_interval_minutes": 30,
         "quiet_hours": {"start": "20:00", "end": "08:00", "timezone": "Europe/London"},
     },
-    "brain": {"provider": "claude"},
+    "brain": {"provider": "ollama", "model": "qwen3:1.7b"},
     "compliance": {"precleared": {
         "enabled": True, "sender_country": "GB", "address_source": "published",
         "prospect_country": "GB",
@@ -108,11 +108,10 @@ def test_retraining_keeps_every_setting_training_does_not_learn(tmp_path):
 
 
 def test_brain_selection_comes_from_the_trainer(tmp_path):
-    # `sellbird train --provider codex` must win over the file's old choice.
     path = tmp_path / "sellbird.local.yaml"
     write(path, TUNED)
-    learned = {**LEARNED, "brain": {"provider": "codex", "model": "gpt-5.5"}}
-    assert write_trained_config(learned, path)["brain"] == {"provider": "codex", "model": "gpt-5.5"}
+    learned = {**LEARNED, "brain": {"provider": "ollama", "model": "qwen3:4b"}}
+    assert write_trained_config(learned, path)["brain"] == {"provider": "ollama", "model": "qwen3:4b"}
 
 
 def test_first_training_keeps_the_template_settings(tmp_path):

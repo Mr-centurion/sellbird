@@ -177,7 +177,7 @@ def cmd_train(args):
 
 def cmd_mcp(args):
     """Serve MCP over stdio for the user's coding agent. Prints nothing else."""
-    # `sellbird mcp install|uninstall [claude|codex]` and --print.
+    # `sellbird mcp install|uninstall` and --print.
     if getattr(args, "mcp_action", None):
         from sellbird import mcp_install
         sys.exit(mcp_install.run_command(args.mcp_action, args.client,
@@ -236,9 +236,8 @@ def cmd_status(args):
         print(f"  Draft campaigns:      {summary['draft_campaigns']}")
         print(f"  Active campaigns:     {summary['active_campaigns']}")
         print(f"  Open conversations:   {summary['open_conversations']}")
-        by_provider = summary.get("usage_today_by_provider", {})
-        print(f"  Claude calls today:   {by_provider.get('claude', summary['usage_today'])}")
-        print(f"  Codex calls today:    {by_provider.get('codex', 0)}")
+        calls_today = summary.get("usage_today", 0)
+        print(f"  Brain calls today:    {calls_today}")
         from sellbird.config import compliance_notice, load_config, sending_notice
         loaded = None
         try:
@@ -289,8 +288,6 @@ def cmd_status(args):
             brain_config = load_brain_config()
         except ConfigError as e:
             brain_config, config_error = None, e
-        # Only the configured provider's health: an old Codex pause says
-        # nothing once sellbird.yaml has switched to Claude.
         brain_status = active_brain_status(
             await state.get_setting(BRAIN_STATUS_KEY),
             brain_config.provider if brain_config else "")
@@ -302,20 +299,16 @@ def cmd_status(args):
             else:
                 brain = Brain(state, brain_config)
                 problem = await brain.preflight()
-                label = brain.provider_label + (f" ({brain.model})" if brain.model else "")
+                label = f"Ollama ({brain.model})"
                 if problem:
                     healthy = False
                     print(f"  Brain:                {label} NOT READY")
                     print(f"                        {problem}")
-                elif brain.provider == "codex":
-                    print(f"  Brain:                {label} ready (CLI, isolation, login, "
-                          "model and account checked; no prompt sent)")
                 else:
-                    print(f"  Brain:                {label} CLI isolation flags present "
-                          "(login not checked: Claude is checked by its first call)")
+                    print(f"  Brain:                {label} ready at {brain.ollama_url} "
+                          "(model available; reachability verified)")
         elif brain_status.get("status") == "paused":
-            label = {"claude": "Claude", "codex": "Codex"}.get(brain_status.get("provider"), "Brain")
-            print(f"  Brain:                {label} PAUSED since {brain_status.get('since', '?')}")
+            print(f"  Brain:                Ollama PAUSED since {brain_status.get('since', '?')}")
             print(f"                        {brain_status.get('reason', '')}")
         print()
         return healthy
@@ -340,36 +333,9 @@ def cmd_usage(args):
             print(f"  {e}")
             brain_config = None
 
-        # Live quota for the ACTIVE provider only (best-effort). Each
-        # subscription's gauge is read from its own source and labelled as
-        # such; one is never shown as the other.
-        windows = None
-        provider = brain_config.provider if brain_config else None
-        try:
-            if provider == "codex":
-                from sellbird.codex import CodexClient, CodexQuotaClient
-                windows = await CodexQuotaClient(
-                    CodexClient(model=brain_config.model)).get_utilization()
-            elif provider == "claude":
-                from sellbird.integrations.quota import QuotaClient
-                windows = await QuotaClient().get_utilization()
-        except Exception:
-            pass
-
-        label = {"claude": "Claude", "codex": "Codex"}.get(provider, "Brain")
-        print(f"\n  {label} Usage")
+        label = "Ollama"
+        print(f"\n  {label} Usage (Local & Unmetered)")
         print("  " + "=" * 52)
-        if windows:
-            labels = {"five_hour": "5-hour window", "seven_day": "Weekly",
-                      "limit_reached": "Usage limit"}
-            for key, w in windows.items():
-                resets = f"  (resets {w['resets_at']})" if w.get("resets_at") else ""
-                print(f"  {labels.get(key, key):<16} {w['utilization']:5.1f}% used{resets}")
-        elif provider == "codex":
-            print("  Quota gauge unavailable (check 'codex login', the Codex CLI "
-                  "version, and network).")
-        elif provider == "claude":
-            print("  Quota gauge unavailable (run 'claude login' or check network).")
 
         totals = await state.usage_totals()
         print()
@@ -383,7 +349,7 @@ def cmd_usage(args):
             )
 
         by_provider = await state.usage_by_provider(days=args.days)
-        if len(by_provider) > 1 or (by_provider and by_provider[0]["provider"] != "claude"):
+        if len(by_provider) > 1 or (by_provider and by_provider[0]["provider"] != "ollama"):
             print(f"\n  By provider (last {args.days} days):")
             for row in by_provider:
                 print(
@@ -575,7 +541,7 @@ def cmd_outbox(args):
 
 
 def cmd_profile(args):
-    """Read what companies' own websites say about them. Free, no Claude calls."""
+    """Read what companies' own websites say about them. Free, no LLM calls."""
     from sellbird.state import StateManager
     from sellbird.pipeline import run_profile_stage
 
@@ -1151,13 +1117,13 @@ def main():
         help="Max pages to crawl (default: 100)",
     )
     sub.add_argument(
-        "--provider", choices=["claude", "codex"], default=None,
-        help="Subscription to think with (default: the one in your config, else claude)",
+        "--provider", choices=["ollama"], default="ollama",
+        help="Provider to think with (default: ollama)",
     )
-    sub.add_argument("--model", default=None, help="Model for this provider (default: provider default)")
+    sub.add_argument("--model", default=None, help="Model for this provider (default: qwen3:1.7b)")
     sub.add_argument(
         "--reasoning-effort", default=None,
-        help="Codex reasoning effort (minimal/low/medium/high/xhigh)",
+        help="Reasoning effort",
     )
     sub.set_defaults(func=cmd_train)
 
@@ -1175,8 +1141,7 @@ def main():
     sub = subparsers.add_parser("status", help="Show pipeline status")
     sub.add_argument(
         "--check", action="store_true",
-        help="Also check the configured brain now (Codex: CLI version, isolation "
-             "and login; Claude: CLI isolation flags; no model call)",
+        help="Also check the configured brain now (Ollama reachability and model availability)",
     )
     sub.set_defaults(func=cmd_status)
 
@@ -1251,7 +1216,7 @@ def main():
     sub.set_defaults(func=cmd_discover)
 
     sub = subparsers.add_parser(
-        "profile", help="Read discovered companies' websites (free, no Claude)")
+        "profile", help="Read discovered companies' websites (free, no LLM)")
     sub.add_argument("--limit", type=int, default=200,
                      help="Max sites to read (default: 200)")
     sub.add_argument("--stale-days", type=int, default=90,
@@ -1299,7 +1264,7 @@ def main():
     sub.set_defaults(func=cmd_precleared_key)
 
     # sellbird usage
-    sub = subparsers.add_parser("usage", help="Show brain usage and quota (Claude or Codex)")
+    sub = subparsers.add_parser("usage", help="Show brain usage")
     sub.add_argument("--days", type=int, default=30, help="Breakdown window (default: 30)")
     sub.set_defaults(func=cmd_usage)
 

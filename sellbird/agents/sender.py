@@ -895,7 +895,7 @@ class Sender:
         if inboxes is None and not self.provider.is_configured():
             logger.warning(
                 f"Sender: mail provider '{self.provider.name}' is not configured "
-                "yet — outbox is holding. See CLAUDE.md → provider setup."
+                "yet — outbox is holding. See provider setup."
             )
             return
         if inboxes is not None and not inboxes.sendable():

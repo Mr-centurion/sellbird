@@ -160,7 +160,7 @@ async def decide_next_action(
     """Decide what Sellbird should do next based on current state.
 
     Uses deterministic priority rules (send_campaign > write_campaign >
-    prospect > idle) instead of burning a Claude call on a decision that is
+    prospect > idle) instead of burning an LLM call on a decision that is
     fully derivable from pipeline counts. This saves budget every cycle and
     removes a fragile LLM string-parsing step.
 
@@ -319,7 +319,7 @@ async def heartbeat(stop_event: asyncio.Event | None = None):
     analyst = Analyst(state)
 
     interval = config.usage.heartbeat_interval_minutes * 60
-    max_calls = max(int(200 * (config.usage.max_daily_claude_percent / 100)), 1)
+    max_calls = max(int(200 * (config.usage.max_daily_percent / 100)), 1)
     consecutive_errors = 0
 
     while not stop_event.is_set():
@@ -365,8 +365,7 @@ async def heartbeat(stop_event: asyncio.Event | None = None):
                     break
                 continue
 
-            # 2. Is the brain usable at all? (Codex: CLI version, isolation,
-            # login, account and model checked without a prompt.) If not, do nothing
+            # 2. Is the brain usable at all? (Ollama reachability and model checked)
             # this cycle — no replies consumed, nothing written or sent —
             # and say why, rather than running agents that would each fail.
             problem = await brain.preflight()
@@ -382,11 +381,11 @@ async def heartbeat(stop_event: asyncio.Event | None = None):
             # 3. Check usage budget (real subscription quota when readable,
             # else Sellbird's own call counter)
             if not await brain.is_within_budget(
-                max_calls, max_percent=config.usage.max_daily_claude_percent
+                max_calls, max_percent=config.usage.max_daily_percent
             ):
                 logger.info(
                     f"{brain.provider_label} usage limit reached "
-                    f"({config.usage.max_daily_claude_percent}% of quota or "
+                    f"({config.usage.max_daily_percent}% of quota or "
                     f"{max_calls} calls). Sleeping 1h, then re-checking."
                 )
                 if await _interruptible_sleep(3600, stop_event):
@@ -413,7 +412,7 @@ async def heartbeat(stop_event: asyncio.Event | None = None):
 
             if action == "prospect":
                 tasks.append(("prospect", scout.run()))
-                # Analyst is cheap (no Claude calls) — keep analytics fresh
+                # Analyst is cheap (no model calls) — keep analytics fresh
                 tasks.append(("analyze", analyst.run()))
             elif action == "write_campaign":
                 tasks.append(("write_campaign", writer.run()))
@@ -436,7 +435,7 @@ async def heartbeat(stop_event: asyncio.Event | None = None):
 
             # Profiling rides along every cycle. It is three HTTP requests per
             # business with no model call, so it costs nothing against the
-            # Claude budget the rest of this loop is rationing — and it is what
+            # costs nothing against the model budget the rest of this loop is rationing
             # turns a name and a domain into something worth writing about.
             if summary.get("unprofiled", 0):
                 tasks.append(("profile", run_profile_stage(state, limit=25, config=config)))

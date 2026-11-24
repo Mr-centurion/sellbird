@@ -396,7 +396,7 @@ def merge_trained_config(learned: dict, existing: dict | None) -> dict:
 
 def _offer_from(product_info: dict) -> dict:
     """The offer ideas training found. Training never picks the offer: the
-    user works it out with their agent (CLAUDE.md, Step 3b) and confirms it
+    user works it out with their agent and confirms it
     on Your company."""
     ideas = product_info.get("entry_offer_ideas")
     ideas = [str(i).strip() for i in ideas if str(i).strip()][:4] if isinstance(ideas, list) else []
@@ -455,7 +455,7 @@ def write_trained_config(learned: dict, path: Path) -> dict:
 class Trainer:
     def __init__(self, brain_config: BrainConfig | None = None):
         # Without an explicit choice, train with whatever provider the
-        # existing config selects (Claude when none does).
+        # existing config selects (Ollama when none does).
         self.brain_config = brain_config or load_brain_config()
         self.state = StateManager()
         self.brain = Brain(self.state, self.brain_config)
@@ -618,7 +618,7 @@ class Trainer:
         return fence(all_content, "your website")
 
     async def _extract_product_info(self) -> dict:
-        """Ask Claude to extract product information from all crawled content."""
+        """Ask the model to extract product information from all crawled content."""
         all_content = self._get_all_content()
 
         prompt = f"""Analyze this entire website and extract comprehensive product/company information.
@@ -653,7 +653,7 @@ Be thorough — you have access to the full website. Extract everything relevant
         return result if isinstance(result, dict) else {}
 
     async def _extract_icp(self) -> dict:
-        """Ask Claude to determine the ideal customer profile from all content."""
+        """Ask the model to determine the ideal customer profile from all content."""
         all_content = self._get_all_content(max_chars=40000)
 
         prompt = f"""Based on this entire website, determine the Ideal Customer Profile (ICP).
@@ -1003,7 +1003,7 @@ What prospects do instead of buying a solution like ours:
                 },
             },
             "usage": {
-                "max_daily_claude_percent": 80,
+                "max_daily_percent": 80,
                 "heartbeat_interval_minutes": 15,
                 "quiet_hours": {
                     "start": "22:00",
