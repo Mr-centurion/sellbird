@@ -490,7 +490,21 @@ Be thorough — you have access to the full website. Extract everything relevant
         result = await self.brain.think_json(
             prompt, session_id="sellbird-trainer", agent="trainer", task="extract_product_info"
         )
-        return result if isinstance(result, dict) else {}
+        if not isinstance(result, dict) or not result:
+            first_url = next(iter(self.scraped_pages.keys()), "")
+            domain = first_url.split("//")[-1].split("/")[0] if first_url else "Business"
+            return {
+                "company_name": domain.replace("www.", "").capitalize(),
+                "product_name": domain.replace("www.", ""),
+                "product_description": f"{domain} operations and services. (non-LLM mode)",
+                "pricing": "Contact for pricing",
+                "key_benefits": ["Efficiency", "Quality", "Support"],
+                "features": ["Core service"],
+                "target_audience": "Prospective clients and business partners",
+                "value_proposition": f"Reliable solutions by {domain}",
+                "mode": "non-LLM mode",
+            }
+        return result
 
     async def _extract_icp(self) -> dict:
         """Ask the model to determine the ideal customer profile from all content."""
@@ -545,11 +559,12 @@ Be specific — don't guess generically. Base this on what the website actually 
         result = await self.brain.think_json(
             prompt, session_id="sellbird-trainer", agent="trainer", task="extract_icp"
         )
-        return result if isinstance(result, dict) else {
-            "industries": ["Technology"],
+        return result if isinstance(result, dict) and result else {
+            "industries": ["Technology", "Services"],
             "company_size": "10-200 employees",
-            "titles": ["VP", "Director", "Head of"],
+            "titles": ["VP", "Director", "Head of", "Owner", "Founder"],
             "geography": ["United States"],
+            "mode": "non-LLM mode",
         }
 
     async def _extract_competitive_intel(self, product_info: dict) -> dict:

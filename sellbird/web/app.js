@@ -425,13 +425,14 @@ function loadCurrentTab() {
     case 'usage': loadUsage(); break;
     case 'settings': loadSettings(); loadSendingModeCard(); break;
     case 'company': loadCompany(); break;
-    case 'controls': loadSellbirdStatus(); loadLogs(); loadInference(); break;
+    case 'controls': loadSellbirdStatus(); loadLogs(); loadInference(); loadHardware(); loadTasks(); checkOllamaStatus(); break;
   }
 }
 
 // ── Today: what needs a human ──
 
 async function loadToday() {
+  checkOllamaStatus();
   const data = await api('/api/today');
   const el = document.getElementById('today-queue');
   if (!data) { el.innerHTML = offlineState(); return; }
@@ -1301,6 +1302,7 @@ async function loadInference() {
   const hostEl = document.getElementById('inference-host');
   const modelEl = document.getElementById('inference-model');
   const totalEl = document.getElementById('inference-total');
+  const cloudEl = document.getElementById('inference-cloud');
   const tbody = document.getElementById('inference-tbody');
 
   if (statusEl) {
@@ -1311,6 +1313,7 @@ async function loadInference() {
   if (hostEl) hostEl.textContent = data.url || 'http://localhost:11434';
   if (modelEl) modelEl.textContent = data.model || 'qwen3:1.7b';
   if (totalEl) totalEl.textContent = String(data.total_count || 0);
+  if (cloudEl) cloudEl.textContent = String(data.cloud_count || 0);
 
   if (tbody) {
     const rows = data.recent || [];
@@ -1329,6 +1332,111 @@ async function loadInference() {
           '<td>' + latency + '</td>' +
         '</tr>';
       }).join('');
+    }
+  }
+}
+
+async function loadHardware() {
+  const data = await api('/api/hardware');
+  if (!data) return;
+
+  const ramEl = document.getElementById('hw-ram');
+  const cpuEl = document.getElementById('hw-cpu');
+  const gpuEl = document.getElementById('hw-gpu');
+  const gpuDescEl = document.getElementById('hw-gpu-desc');
+  const profEl = document.getElementById('hw-profile');
+  const recModelEl = document.getElementById('hw-rec-model');
+  const effEl = document.getElementById('hw-effective');
+  const badgeEl = document.getElementById('hw-override-badge');
+
+  if (ramEl) ramEl.textContent = data.ram_gb != null ? data.ram_gb + ' GB' : '—';
+  if (cpuEl) cpuEl.textContent = 'CPU: ' + (data.cpu_threads || data.cpu_cores || '—') + ' threads';
+  if (gpuEl) gpuEl.textContent = data.has_gpu ? (data.gpu_type === 'apple_silicon' ? 'Apple Silicon' : 'NVIDIA') : 'CPU only';
+  if (gpuDescEl) gpuDescEl.textContent = data.gpu_name || 'No accelerator';
+  if (profEl) profEl.textContent = data.recommended_profile || 'standard laptop';
+  if (recModelEl) recModelEl.textContent = 'Rec: ' + (data.recommended_model || '—') + ' (ctx ' + (data.recommended_num_ctx || 4096) + ')';
+  if (effEl) effEl.textContent = data.effective_model || 'qwen3:1.7b';
+  if (badgeEl) {
+    badgeEl.textContent = data.is_override ? 'Custom override' : 'Auto recommended';
+    badgeEl.style.color = data.is_override ? 'var(--accent, #61afef)' : 'var(--text-3)';
+  }
+}
+
+async function loadTasks() {
+  const data = await api('/api/tasks');
+  if (!data) return;
+
+  const badge = document.getElementById('tasks-badge');
+  const tbody = document.getElementById('tasks-tbody');
+  if (badge) badge.textContent = String(data.queue_length || 0);
+
+  if (tbody) {
+    const list = data.tasks || [];
+    if (!list.length) {
+      tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: var(--text-3); padding: var(--sp-4);">No queued or recent tasks.</td></tr>';
+    } else {
+      tbody.innerHTML = list.map(t => {
+        const statusClass = t.status === 'completed' ? 'chip' : (t.status === 'failed' ? 'chip' : 'chip');
+        const statusStyle = t.status === 'completed' ? 'color: var(--good);' : (t.status === 'failed' ? 'color: var(--warn, #e06c75);' : 'color: var(--text);');
+        return '<tr>' +
+          '<td><code>#' + escHtml(String(t.id)) + '</code></td>' +
+          '<td><b>' + escHtml(t.type || 'inference') + '</b></td>' +
+          '<td><span class="' + statusClass + '" style="' + statusStyle + '">' + escHtml(t.status || 'queued') + '</span></td>' +
+          '<td>' + escHtml(String(t.attempts || 0)) + '</td>' +
+          '<td style="max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="' + escHtml(t.error || '') + '">' + escHtml(t.error || '—') + '</td>' +
+          '<td>' + formatDate(t.created_at) + '</td>' +
+        '</tr>';
+      }).join('');
+    }
+  }
+}
+
+async function retryTasks() {
+  const btn = document.getElementById('btn-retry-tasks');
+  if (btn) btn.disabled = true;
+  const data = await api('/api/tasks/retry', {method: 'POST'});
+  if (btn) btn.disabled = false;
+  if (data) {
+    showToast(data.message || 'Drained queue.', data.success ? 'success' : 'error');
+  }
+  loadTasks();
+  loadInference();
+  checkOllamaStatus();
+}
+
+async function checkOllamaStatus() {
+  const data = await api('/api/status');
+  if (!data) return;
+
+  const banner = document.getElementById('ollama-alert-banner');
+  const bannerTitle = document.getElementById('ollama-alert-title');
+  const bannerDesc = document.getElementById('ollama-alert-desc');
+  const headerChip = document.getElementById('header-ollama-chip');
+
+  const model = data.configured_model || 'qwen3:1.7b';
+  const reachable = !!data.ollama_reachable;
+
+  if (headerChip) {
+    if (reachable) {
+      headerChip.textContent = 'Ollama (' + model + ') Ready';
+      headerChip.style.color = 'var(--good)';
+    } else {
+      headerChip.textContent = 'Ollama (' + model + ') Offline';
+      headerChip.style.color = 'var(--warn, #e06c75)';
+    }
+  }
+
+  if (banner) {
+    if (!reachable) {
+      banner.style.display = 'flex';
+      if (bannerTitle) bannerTitle.textContent = 'Ollama is offline or unreachable';
+      if (bannerDesc) bannerDesc.textContent = 'Cannot reach Ollama at ' + (data.ollama_url || 'http://localhost:11434') + '. Local inference is paused; new tasks will queue.';
+    } else if (!data.configured_model_installed) {
+      banner.style.display = 'flex';
+      if (bannerTitle) bannerTitle.textContent = 'Configured model not installed';
+      if (bannerDesc) bannerDesc.textContent = 'Ollama is running, but model "' + model + '" is not pulled. Run: ollama pull ' + model;
+    } else {
+      banner.style.display = 'none';
     }
   }
 }
@@ -2934,6 +3042,7 @@ setInterval(async () => {
 // under someone mid-decision loses their place, and settings may be mid-edit.
 setInterval(() => {
   if (document.hidden || _locked) return;
+  checkOllamaStatus();
   switch (currentTab) {
     case 'today': loadToday(); loadTrend(); loadFunnel(); loadRuns(); loadTodayActivity(); break;
     case 'companies': if (!companyDrill) loadCompanies(); break;
@@ -2943,7 +3052,7 @@ setInterval(() => {
     case 'activity': loadActivity(); break;
     case 'inboxes': loadInboxes(); break;
     case 'usage': loadUsage(); break;
-    case 'controls': loadLogs(); loadInference(); break;
+    case 'controls': loadLogs(); loadInference(); loadTasks(); break;
   }
 }, 15000);
 

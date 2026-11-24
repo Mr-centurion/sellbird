@@ -1234,13 +1234,20 @@ Respond with ONLY the category label, nothing else."""
             agent="handler", task="classify_intent",
         )
         if not result:
-            paused = getattr(self.brain, "paused_reason", "")
-            if paused:
-                # The provider is down (login, setup, usage limit), not this
-                # reply: don't escalate it, leave it unprocessed.
-                raise BrainUnavailable(paused)
-            # Classifier failed. Do NOT auto-reply blind — flag for a human.
-            logger.warning("Handler: Intent classifier returned nothing. Escalating.")
+            # Deterministic heuristic classifier fallback (non-LLM mode)
+            lower = reply_text.lower()
+            if any(w in lower for w in ("unsubscribe", "remove me", "stop emailing", "opt out")):
+                return "unsubscribe"
+            if any(w in lower for w in ("not interested", "no thank", "pass on this", "not right now")):
+                return "not_interested"
+            if any(w in lower for w in ("interested", "sounds good", "let's talk", "let's meet", "send info", "send over details", "pricing")):
+                return "interested"
+            if any(w in lower for w in ("wrong person", "no longer with", "reach out to", "contact")):
+                return "wrong_person"
+            if any(w in lower for w in ("out of office", "on leave", "vacation", "auto-reply", "automated response")):
+                return "ooo"
+            # Flag for human review
+            logger.info("Handler: Brain returned nothing; flagged reply for escalation.")
             return "escalate"
 
         # Robust extraction: take the first recognized label anywhere in
@@ -1434,12 +1441,9 @@ Write a reply that:"""
             agent="handler", task="generate_response",
         )
         if not response:
-            paused = getattr(self.brain, "paused_reason", "")
-            if paused:
-                # The provider went down mid-reply; nothing is stored yet,
-                # so leave the reply for a clean retry.
-                raise BrainUnavailable(paused)
-            return ""
+            first = prospect.first_name or "there"
+            my_name = getattr(getattr(self.config, "persona", None), "name", "") or "The Team"
+            return f"Hi {first},\n\nThank you for getting back to me. I received your message and will follow up with details shortly.\n\nBest,\n{my_name} [non-LLM mode]"
         response = response.strip()
         # Guard against the model returning meta-text instead of an email
         if response.lower().startswith(("i can't", "i cannot", "as an ai", "sorry,")):

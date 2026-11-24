@@ -968,6 +968,8 @@ Respond ONLY with the JSON array."""
                         contacts[idx].personalization_notes = note.strip()[:500]
         else:
             logger.warning("Scout: Brain scoring failed, using heuristic scores.")
+            for c in contacts:
+                c.personalization_notes = ((c.personalization_notes or "").strip() + " [non-LLM mode]").strip()
 
         contacts = [c for c in contacts if c.score >= 30]
         contacts.sort(key=lambda c: c.score, reverse=True)

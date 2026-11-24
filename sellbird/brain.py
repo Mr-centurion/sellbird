@@ -238,6 +238,21 @@ class Brain:
             except OllamaUnavailable as e:
                 logger.error(f"Ollama call failed: {e}")
                 await self._mark_unavailable(e)
+                if self.state is not None:
+                    try:
+                        await self.state.queue_task(
+                            task_type=task or agent or "inference",
+                            payload={
+                                "prompt": prompt,
+                                "session_id": session_id,
+                                "agent": agent,
+                                "task": task,
+                                "expect_json": expect_json,
+                            },
+                            error=str(e),
+                        )
+                    except Exception as q_err:
+                        logger.warning(f"Failed to queue task on Ollama failure: {q_err}")
                 return ""
             except asyncio.CancelledError:
                 raise

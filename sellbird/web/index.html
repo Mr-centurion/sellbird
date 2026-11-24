@@ -109,6 +109,7 @@
     <div class="sellbird-status" id="header-status">
       <span class="status-dot stopped" id="header-dot"></span>
       <span id="header-status-text">Checking…</span>
+      <span class="chip" id="header-ollama-chip" style="margin-top: 4px; display: inline-flex; font-size: 11px;">Ollama (qwen3:1.7b)</span>
     </div>
     <div class="foot-actions">
       <div class="theme-switch" role="group" aria-label="Appearance">
@@ -124,6 +125,14 @@
 
 <main class="content">
 <div class="content-inner">
+
+<div id="ollama-alert-banner" class="banner bad" style="display:none; margin-bottom: var(--sp-4);">
+  <svg class="icon" aria-hidden="true"><use href="#i-alert"/></svg>
+  <div>
+    <b id="ollama-alert-title">Ollama is offline or unreachable</b>
+    <p id="ollama-alert-desc">Cannot reach local Ollama. Local inference is paused; queuing tasks.</p>
+  </div>
+</div>
 
 <!-- Today: what needs a human -->
 <div id="today" class="section active">
@@ -400,9 +409,9 @@
       <div class="card kpi">
         <span class="kpi-label">Cloud AI used</span>
         <div class="kpi-main">
-          <span class="kpi-value" style="color: var(--good); font-size: 1.25rem;">0% (None)</span>
+          <span class="kpi-value" id="inference-cloud">0</span>
         </div>
-        <span class="kpi-note">100% offline &amp; private</span>
+        <span class="kpi-note">Host not localhost</span>
       </div>
     </div>
     <div class="table-card">
@@ -419,6 +428,78 @@
         </thead>
         <tbody id="inference-tbody">
           <tr><td colspan="6" style="text-align: center; color: var(--text-3); padding: var(--sp-4);">Loading inference history…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Hardware & Model Profile Card -->
+  <div class="card" style="margin-top: var(--sp-4);">
+    <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: var(--sp-3);">
+      <div>
+        <h2 style="margin-bottom: 2px;">Hardware &amp; Model Profile</h2>
+        <p class="desc" style="margin: 0; font-size: var(--fs-caption); color: var(--text-3);">System resources detected by psutil and recommended Ollama settings.</p>
+      </div>
+      <button class="btn btn-ghost btn-sm" onclick="loadHardware()"><svg class="icon" aria-hidden="true"><use href="#i-refresh"/></svg>Refresh</button>
+    </div>
+    <div class="kpis" style="margin-bottom: var(--sp-4);">
+      <div class="card kpi">
+        <span class="kpi-label">System RAM</span>
+        <div class="kpi-main">
+          <span class="kpi-value" id="hw-ram" style="font-size: 1.25rem;">—</span>
+        </div>
+        <span class="kpi-note" id="hw-cpu">CPU: —</span>
+      </div>
+      <div class="card kpi">
+        <span class="kpi-label">GPU Acceleration</span>
+        <div class="kpi-main">
+          <span class="kpi-value" id="hw-gpu" style="font-size: 1.1rem;">—</span>
+        </div>
+        <span class="kpi-note" id="hw-gpu-desc">—</span>
+      </div>
+      <div class="card kpi">
+        <span class="kpi-label">Recommended Profile</span>
+        <div class="kpi-main">
+          <span class="kpi-value" id="hw-profile" style="font-size: 1.1rem;">—</span>
+        </div>
+        <span class="kpi-note" id="hw-rec-model">Model: —</span>
+      </div>
+      <div class="card kpi">
+        <span class="kpi-label">Active Configuration</span>
+        <div class="kpi-main">
+          <span class="kpi-value" id="hw-effective" style="font-size: 1.1rem;">—</span>
+        </div>
+        <span class="kpi-note" id="hw-override-badge">Default</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Queued Tasks Card -->
+  <div class="card" style="margin-top: var(--sp-4);">
+    <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: var(--sp-3);">
+      <div>
+        <h2 style="margin-bottom: 2px;">Queued Tasks <span class="badge" id="tasks-badge" style="margin-left: 8px;">0</span></h2>
+        <p class="desc" style="margin: 0; font-size: var(--fs-caption); color: var(--text-3);">Inference tasks queued while Ollama was unavailable.</p>
+      </div>
+      <div class="btn-group">
+        <button class="btn btn-secondary btn-sm" id="btn-retry-tasks" onclick="retryTasks()"><svg class="icon" aria-hidden="true"><use href="#i-refresh"/></svg>Drain / Retry Queue</button>
+        <button class="btn btn-ghost btn-sm" onclick="loadTasks()"><svg class="icon" aria-hidden="true"><use href="#i-refresh"/></svg>Refresh</button>
+      </div>
+    </div>
+    <div class="table-card">
+      <table class="table nowrap" id="tasks-table">
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Type</th>
+            <th>Status</th>
+            <th>Attempts</th>
+            <th>Error</th>
+            <th>Created</th>
+          </tr>
+        </thead>
+        <tbody id="tasks-tbody">
+          <tr><td colspan="6" style="text-align: center; color: var(--text-3); padding: var(--sp-4);">No queued tasks.</td></tr>
         </tbody>
       </table>
     </div>

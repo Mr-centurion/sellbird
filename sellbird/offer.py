@@ -100,6 +100,20 @@ async def suggest_offers(brain, config) -> list[dict]:
         if offer:
             out.append({"offer": offer, "finding": str(item.get("finding") or "").strip(),
                         "why": str(item.get("why") or "").strip()})
+    if not out:
+        company = str(getattr(getattr(config, "persona", None), "company", "") or "your business").strip()
+        out = [
+            {
+                "offer": f"A 15-minute diagnostic review with {company} (non-LLM mode)",
+                "finding": "Standard high-value exploratory consultation",
+                "why": "Provides immediate actionable insights without requiring commitment.",
+            },
+            {
+                "offer": f"A customized operations benchmark teardown (non-LLM mode)",
+                "finding": "Benchmarking and comparative analysis",
+                "why": "Demonstrates domain expertise directly addressing prospect needs.",
+            },
+        ]
     return out[:SUGGESTIONS]
 
 

@@ -181,6 +181,8 @@ class Writer:
         self.state = state
         self.config = config
         self.env = env
+        self.skills = ""
+        self.email_rules = ""
 
     @property
     def is_native(self) -> bool:

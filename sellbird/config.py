@@ -601,6 +601,7 @@ class BrainConfig(BaseModel):
     model: str = "qwen3:1.7b"
     ollama_url: str = "http://localhost:11434"
     num_ctx: int = 4096
+    hardware_profile: str = ""
     reasoning_effort: str = ""
 
     @field_validator("provider", mode="before")

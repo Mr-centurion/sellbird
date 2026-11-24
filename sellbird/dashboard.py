@@ -881,13 +881,105 @@ async def get_inference():
     count_rows = await query_db("SELECT COUNT(*) as cnt FROM inference_log")
     total_count = count_rows[0]["cnt"] if count_rows else 0
 
+    cloud_rows = await query_db(
+        "SELECT COUNT(*) as cnt FROM inference_log WHERE host NOT IN ('localhost', '127.0.0.1', '::1')"
+    )
+    cloud_count = cloud_rows[0]["cnt"] if cloud_rows else 0
+
     return {
         "status": ollama_status,
         "model": model,
         "url": ollama_url,
         "total_count": total_count,
+        "cloud_count": cloud_count,
         "recent": rows,
     }
+
+
+@app.get("/api/hardware")
+async def get_hardware():
+    """System hardware detection and recommended Ollama model profiles."""
+    from sellbird.config import load_config
+    from sellbird.hardware import get_hardware_info
+    try:
+        cfg = load_config()
+    except Exception:
+        cfg = None
+    return get_hardware_info(cfg)
+
+
+@app.get("/api/status")
+async def get_status():
+    """Global system status: Ollama reachable, configured model installed, recommended model, queue length, last inference time."""
+    from sellbird.config import load_config
+    from sellbird.hardware import get_hardware_info
+    from sellbird.ollama_runtime import OllamaClient
+
+    try:
+        config = load_config()
+        brain_cfg = config.brain
+    except Exception:
+        config = None
+        brain_cfg = None
+
+    model = getattr(brain_cfg, "model", "qwen3:1.7b") if brain_cfg else "qwen3:1.7b"
+    ollama_url = getattr(brain_cfg, "ollama_url", "http://localhost:11434") if brain_cfg else "http://localhost:11434"
+
+    hw = get_hardware_info(config)
+    rec_model = hw.get("recommended_model", "qwen3:1.7b")
+
+    ollama_reachable = False
+    model_installed = False
+
+    try:
+        client = OllamaClient(base_url=ollama_url, model=model)
+        reason = await asyncio.wait_for(client.preflight(), timeout=1.5)
+        if not reason:
+            ollama_reachable = True
+            model_installed = True
+        elif "missing" in reason.lower() or "pull" in reason.lower():
+            ollama_reachable = True
+            model_installed = False
+        else:
+            ollama_reachable = False
+            model_installed = False
+    except Exception:
+        ollama_reachable = False
+        model_installed = False
+
+    state = _state()
+    queue_length = await state.count_queued_tasks()
+
+    latest_inf = await query_db("SELECT ts FROM inference_log ORDER BY id DESC LIMIT 1")
+    last_inference_time = latest_inf[0]["ts"] if latest_inf else None
+
+    return {
+        "ollama_reachable": ollama_reachable,
+        "configured_model_installed": model_installed,
+        "recommended_model": rec_model,
+        "configured_model": model,
+        "ollama_url": ollama_url,
+        "queue_length": queue_length,
+        "last_inference_time": last_inference_time,
+    }
+
+
+@app.get("/api/tasks")
+async def get_tasks_list():
+    """List recent tasks and queued count."""
+    state = _state()
+    tasks = await state.get_tasks(limit=20)
+    queue_length = await state.count_queued_tasks()
+    return {"tasks": tasks, "queue_length": queue_length}
+
+
+@app.post("/api/tasks/retry")
+async def retry_queued_tasks():
+    """Drain and retry queued inference tasks."""
+    from sellbird.task_queue import drain_task_queue
+    state = _state()
+    res = await drain_task_queue(state)
+    return res
 
 
 # ── Pipeline Data (existing endpoints) ──

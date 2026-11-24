@@ -15,6 +15,7 @@ from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
 from datetime import datetime, date, timedelta, timezone
 from pathlib import Path
+from typing import Any
 
 import aiosqlite
 
@@ -571,6 +572,18 @@ MIGRATIONS: list[str] = [
         latency_ms INTEGER,
         status TEXT NOT NULL
     );
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS tasks (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        type TEXT NOT NULL,
+        payload TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'queued',
+        attempts INTEGER NOT NULL DEFAULT 0,
+        error TEXT DEFAULT '',
+        created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
     """,
 ]
 
@@ -2818,4 +2831,79 @@ class StateManager:
             # model call budget the rest of the loop is rationing.
             "unprofiled": await self.count_companies_needing_profile(),
         }
+
+    async def queue_task(self, task_type: str, payload: Any, error: str = "") -> int:
+        """Save a task to the tasks table with status 'queued'."""
+        if not isinstance(payload, str):
+            payload_str = json.dumps(payload)
+        else:
+            payload_str = payload
+        now = datetime.now(timezone.utc).isoformat()
+        async with storage.connect(self.db_path) as db:
+            cursor = await db.execute(
+                "INSERT INTO tasks (type, payload, status, attempts, error, created_at) "
+                "VALUES (?, ?, 'queued', 0, ?, ?)",
+                (task_type, payload_str, str(error or ""), now),
+            )
+            await db.commit()
+            return cursor.lastrowid
+
+    async def get_queued_tasks(self, limit: int = 50) -> list[dict]:
+        """Fetch queued tasks ordered by creation time."""
+        async with storage.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                "SELECT id, type, payload, status, attempts, error, created_at "
+                "FROM tasks WHERE status = 'queued' ORDER BY id ASC LIMIT ?",
+                (limit,),
+            ) as cursor:
+                rows = await cursor.fetchall()
+                return [dict(r) for r in rows]
+
+    async def update_task_status(
+        self, task_id: int, status: str, attempts: int | None = None, error: str = ""
+    ):
+        """Update a task's status, attempts count, and error string."""
+        async with storage.connect(self.db_path) as db:
+            if attempts is not None:
+                await db.execute(
+                    "UPDATE tasks SET status = ?, attempts = ?, error = ? WHERE id = ?",
+                    (status, attempts, error, task_id),
+                )
+            else:
+                await db.execute(
+                    "UPDATE tasks SET status = ?, error = ? WHERE id = ?",
+                    (status, error, task_id),
+                )
+            await db.commit()
+
+    async def count_queued_tasks(self) -> int:
+        """Count how many tasks are currently queued."""
+        try:
+            async with storage.connect(self.db_path) as db:
+                async with db.execute(
+                    "SELECT COUNT(*) FROM tasks WHERE status = 'queued'"
+                ) as cursor:
+                    row = await cursor.fetchone()
+                    return row[0] if row else 0
+        except Exception:
+            return 0
+
+    async def get_tasks(self, status: str | None = None, limit: int = 50) -> list[dict]:
+        """Fetch tasks, optionally filtered by status."""
+        try:
+            async with storage.connect(self.db_path) as db:
+                db.row_factory = aiosqlite.Row
+                if status:
+                    sql = "SELECT * FROM tasks WHERE status = ? ORDER BY id DESC LIMIT ?"
+                    params = (status, limit)
+                else:
+                    sql = "SELECT * FROM tasks ORDER BY id DESC LIMIT ?"
+                    params = (limit,)
+                async with db.execute(sql, params) as cursor:
+                    rows = await cursor.fetchall()
+                    return [dict(r) for r in rows]
+        except Exception:
+            return []
+
 
