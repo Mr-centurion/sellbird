@@ -1,0 +1,18 @@
+Binary file ./sellbird/__pycache__/state.cpython-313.pyc matches
+./sellbird/state.py:197:        instantly_campaign_id TEXT DEFAULT '',
+./sellbird/state.py:236:        claude_calls INTEGER DEFAULT 0,
+./sellbird/state.py:466:    -- the provider's stable id ("dataforseo:ChIJ...", "osm:node/123") and is
+./sellbird/state.py:503:    # ── v11: which subscription each call ran on (claude | codex) ──
+./sellbird/state.py:505:    -- Every row before this migration was a Claude call.
+./sellbird/state.py:506:    ALTER TABLE usage_events ADD COLUMN provider TEXT DEFAULT 'claude';
+./sellbird/state.py:509:    -- claude_calls keeps meaning Claude calls; Codex calls count separately
+./sellbird/state.py:511:    ALTER TABLE usage_log ADD COLUMN codex_calls INTEGER DEFAULT 0;
+./tests/fixtures/pre_codex_harvey_0_2_1.sql:1:-- Database written by Harvey 0.2.1 (commit 7940da4, before the Codex provider):
+./tests/fixtures/pre_codex_harvey_0_2_1.sql:2:-- one contacted prospect, one Claude call and its usage event, one setting.
+./tests/fixtures/pre_codex_harvey_0_2_1.sql:16:        instantly_campaign_id TEXT DEFAULT '',
+./tests/fixtures/pre_codex_harvey_0_2_1.sql:177:INSERT INTO "usage_events" VALUES('04e31ac435e4','2026-10-13 17:12:16','writer','write_sequence','s-old','','claude-sonnet',10,5,0,0,0.01,0,0,0,'result_json');
+./tests/fixtures/pre_codex_harvey_0_2_1.sql:181:        claude_calls INTEGER DEFAULT 0,
+./docs/AUDIT.md:6:- `usage_log.claude_calls`: Legacy column name in SQLite schema representing daily model calls (now exclusively Ollama). Retained to avoid breaking existing databases and migrations.
+./docs/AUDIT.md:7:- `usage_log.codex_calls`: Legacy column name retained for schema compatibility, no longer read or incremented.
+./docs/AUDIT.md:8:- `campaigns.instantly_campaign_id`: Legacy column name retained in schema migrations.
+Binary file ./data/sellbird.db matches

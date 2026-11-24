@@ -181,62 +181,6 @@ def test_mime_without_signature_is_plain_text():
     assert msg.get_content_type() == "text/plain"
 
 
-@pytest.mark.asyncio
-async def test_smtp_sends_the_signed_message(logo, monkeypatch):
-    from sellbird.integrations import smtp_mail
-    sent = []
-    async def fake_send(msg, **kwargs):
-        sent.append(msg)
-    monkeypatch.setattr(smtp_mail.aiosmtplib, "send", fake_send)
-    cfg = config(logo=str(logo))
-    cfg.persona = SimpleNamespace(name="Sam", email="sam@sender.example", company="Acme")
-    env = SimpleNamespace(smtp_host="smtp.sender.example", smtp_port=587,
-                          smtp_username="sam@sender.example", smtp_password="x")
-
-    result = await smtp_mail.SmtpImapProvider(cfg, env).send_email("jane@acme.example", "hi", "Hi Jane.")
-
-    assert result.ok and sent[0].get_content_type() == "multipart/alternative"
-
-
-@pytest.mark.asyncio
-async def test_gmail_sends_the_signed_message(logo):
-    import base64
-    from sellbird.integrations import gmail
-    cfg = config(logo=str(logo))
-    cfg.persona = SimpleNamespace(name="Sam", email="sam@sender.example", company="Acme")
-    p = gmail.GmailProvider(cfg, SimpleNamespace())
-    p._request = AsyncMock(side_effect=[{"id": "g1", "threadId": "t1"}, None])
-
-    result = await p.send_email("jane@acme.example", "hi", "Hi Jane.")
-
-    assert result.ok
-    raw = p._request.call_args_list[0].kwargs["json"]["raw"]
-    parsed = email.message_from_bytes(base64.urlsafe_b64decode(raw), policy=email.policy.default)
-    assert parsed.get_content_type() == "multipart/alternative"
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("provider", ["smtp", "gmail"])
-async def test_unusable_logo_sends_nothing(tmp_path, provider, monkeypatch):
-    from sellbird.integrations import gmail, smtp_mail
-    cfg = config(logo=str(tmp_path / "missing.png"))
-    cfg.persona = SimpleNamespace(name="Sam", email="sam@sender.example", company="Acme")
-    monkeypatch.setattr(smtp_mail.aiosmtplib, "send", AsyncMock())
-    if provider == "smtp":
-        p = smtp_mail.SmtpImapProvider(cfg, SimpleNamespace(smtp_host="h", smtp_username="u", smtp_password="x"))
-    else:
-        p = gmail.GmailProvider(cfg, SimpleNamespace())
-        p._request = AsyncMock()
-
-    result = await p.send_email("jane@acme.example", "hi", "Hi Jane.")
-
-    assert not result.ok and result.error.startswith("signature:")
-    if provider == "smtp":
-        smtp_mail.aiosmtplib.send.assert_not_called()
-    else:
-        p._request.assert_not_called()
-
-
 # ── the outbox ──
 
 

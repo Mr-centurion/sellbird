@@ -123,6 +123,8 @@ class OllamaClient:
         await self._ensure_log_table()
         import aiosqlite
 
+        agent = (agent or "").strip() or "brain"
+        task = (task or "").strip() or "chat"
         ts = datetime.now(timezone.utc).isoformat()
         try:
             async with aiosqlite.connect(self.db_path) as db:
@@ -210,6 +212,15 @@ class OllamaClient:
         timeout: float = DEFAULT_TIMEOUT_SECONDS,
     ) -> str:
         """Send chat prompt to Ollama /api/chat and return cleaned response string."""
+        agent = (agent or "").strip()
+        if not agent and session_id:
+            for known in ("trainer", "scout", "writer", "handler", "analyst"):
+                if known in session_id.lower():
+                    agent = known
+                    break
+        if not agent:
+            agent = "brain"
+        task = (task or "").strip() or (session_id or "") or "chat"
         url = f"{self.base_url}/api/chat"
         payload: dict[str, Any] = {
             "model": self.model,

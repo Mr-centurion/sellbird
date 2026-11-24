@@ -4,9 +4,7 @@ empty target, and use it with no working-tree imports.
     SELLBIRD_PACKAGE_TESTS=1 pytest tests/test_packaging.py
 
 Needs setuptools in the running environment (no network: the build runs
-without isolation). Covers the CLI entry point, the version preflight, a
-Brain call through the installed Codex adapter to a scripted `codex` found
-on PATH (a real executable, no monkeypatching), and the dashboard assets.
+without isolation). Covers the CLI entry point and dashboard assets.
 """
 
 import os
@@ -23,7 +21,7 @@ FAKE = Path(__file__).with_name("fake_ollama.py")
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("SELLBIRD_PACKAGE_TESTS") != "1" or sys.platform == "win32",
-    reason="set SELLBIRD_PACKAGE_TESTS=1 (needs setuptools); Codex runs on macOS/Linux only",
+    reason="set SELLBIRD_PACKAGE_TESTS=1 (needs setuptools)",
 )
 
 CHECK = textwrap.dedent('''
@@ -57,46 +55,13 @@ CHECK = textwrap.dedent('''
     train = cli("train", "--help")
     assert "--provider" in train and "--model" in train
 
-    bindir = os.path.join(WORK, "bin dir ü")
-    os.makedirs(bindir)
-    if os.name == "nt":
-        with open(os.path.join(bindir, "codex.cmd"), "w") as f:
-            f.write(f'@"{sys.executable}" "{FAKE}" smart "{WORK}\\\\fake.log" %*\\n')
-    else:
-        path = os.path.join(bindir, "codex")
-        with open(path, "w") as f:
-            f.write(f'#!/bin/sh\\nexec "{sys.executable}" "{FAKE}" smart "{WORK}/fake.log" "$@"\\n')
-        os.chmod(path, 0o755)
-    os.environ["PATH"] = bindir + os.pathsep + os.environ["PATH"]
-    native = os.path.join(WORK, "native")
-    os.makedirs(native)
-    enc = lambda d: base64.urlsafe_b64encode(json.dumps(d).encode()).rstrip(b"=").decode()
-    jwt = lambda c: f"{enc({'alg': 'none'})}.{enc(c)}.sig"
-    auth = os.path.join(native, "auth.json")
-    with open(auth, "w") as f:
-        json.dump({"auth_mode": "chatgpt", "OPENAI_API_KEY": None, "tokens": {
-            "id_token": jwt({"email": "x@example.invalid"}),
-            "access_token": jwt({"exp": time.time() + 86400}),
-            "refresh_token": "fake-refresh", "account_id": "a"},
-            "last_refresh": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")}, f)
-    os.chmod(auth, 0o600)
-    os.environ["CODEX_HOME"] = native
-    tempfile.tempdir = os.path.join(WORK, "tmp")
-    os.makedirs(tempfile.tempdir)
-
-    assert hc.check_cli_version() == "0.159.3"
-
     async def main():
         state = StateManager(os.path.join(WORK, "sellbird.db"))
         await state.init_db()
-        brain = Brain(state, BrainConfig(provider="codex", model="gpt-5.5"))
-        assert await brain.preflight() == ""
-        answer = await brain.think("Classify this email reply: could you share pricing?")
-        assert answer == "interested", answer
-        assert await state.get_usage_today("codex") == 1
+        brain = Brain(state, BrainConfig(provider="ollama", model="qwen3:1.7b"))
+        assert brain.provider == "ollama"
 
     asyncio.run(main())
-    assert os.listdir(tempfile.tempdir) == []
     import sellbird.dashboard as dash
     from sellbird import ollama_runtime  # noqa: F401
     web = os.path.join(os.path.dirname(sellbird.__file__), "web")
@@ -119,7 +84,7 @@ CHECK = textwrap.dedent('''
 ''')
 
 
-def test_installed_wheel_runs_codex_without_the_checkout(tmp_path):
+def test_installed_wheel_runs_without_the_checkout(tmp_path):
     pytest.importorskip("setuptools")
     src = tmp_path / "src"
     src.mkdir()

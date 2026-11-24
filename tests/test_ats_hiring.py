@@ -401,8 +401,6 @@ def test_the_hiring_preset_falls_back_to_titles_and_needs_search():
     terms = [q.term for q in build_queries(_config(hiring=()), preset="hiring")]
     assert len(terms) == 1 and '"ceo"' in terms[0]
     assert preset_problem("hiring", "osm")
-    assert preset_problem("hiring", "serper") is None
-    assert preset_problem("hiring", "tinyfish") is None
     assert "hiring" in PRESETS
 
 
@@ -580,12 +578,17 @@ def test_role_equivalences_and_assistants(keyword, title, hit):
     assert bool(matching_roles([parse_feed("lever", [{"text": title}])[0]], [keyword])) is hit
 
 
-def test_the_hiring_preset_needs_roles():
+def test_the_hiring_preset_needs_roles(monkeypatch):
+    from sellbird.collectors.discover import DiscoveryProvider, PROVIDERS
+    class FakeSearchProvider(DiscoveryProvider):
+        key = "fake_serp"
+        kind = "serp"
+    monkeypatch.setitem(PROVIDERS, "fake_serp", FakeSearchProvider())
     empty = _config(titles=(), hiring=())
-    problem = preset_problem("hiring", "serper", config=empty)
+    problem = preset_problem("hiring", "fake_serp", config=empty)
     assert problem and "hiring_signals" in problem
-    assert preset_problem("hiring", "serper", config=_config()) is None
-    assert preset_problem("yc", "serper", config=empty) is None
+    assert preset_problem("hiring", "fake_serp", config=_config()) is None
+    assert preset_problem("yc", "fake_serp", config=empty) is None
 
 
 @pytest.mark.parametrize("domain", [

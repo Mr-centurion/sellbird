@@ -22,7 +22,6 @@ class Campaign(BaseModel):
     id: str
     name: str = ""
     channel: str = "email"  # email/linkedin
-    instantly_campaign_id: str = ""
     sequence: list[EmailStep] = Field(default_factory=list)
     status: str = "draft"  # draft/active/paused/completed
     prospect_ids: list[str] = Field(default_factory=list)

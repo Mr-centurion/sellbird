@@ -2,7 +2,7 @@
 
 When _write_sequence comes back empty (unparseable output, or an inbox
 sequence that used a person's name), the batch's prospects stayed 'new', so
-every heartbeat chose write_campaign again, spent a Claude call, and Scout
+every heartbeat chose write_campaign again, spent a model call, and Scout
 never ran. Now each prospect gets a few attempts; after that it is moved to
 'write_failed', which is visible and no longer blocks the pipeline. A
 provider outage is not the model's fault and never counts as an attempt.
@@ -40,7 +40,7 @@ class FakeBrain:
 
 
 CONFIG = SimpleNamespace(
-    channels=SimpleNamespace(email=SimpleNamespace(provider="instantly", require_approval=False)),
+    channels=SimpleNamespace(email=SimpleNamespace(provider="draft", require_approval=False)),
     product=SimpleNamespace(name="P", description="D", key_benefits=[], pricing=""),
     persona=SimpleNamespace(name="S", company="C", role="R", tone="t"),
 )
@@ -85,7 +85,7 @@ async def test_a_batch_that_keeps_failing_stops_after_a_few_attempts(state):
 @pytest.mark.asyncio
 async def test_a_provider_outage_never_counts_as_an_attempt(state):
     pid = await add(state, 1)
-    writer = Writer(FakeBrain(paused="Claude usage limit reached"), state, CONFIG, None)
+    writer = Writer(FakeBrain(paused="Ollama is unreachable"), state, CONFIG, None)
     for _ in range(MAX_WRITE_ATTEMPTS + 2):
         await writer.run()
     assert await status(state, pid) == "new"
@@ -117,7 +117,7 @@ async def test_attempts_are_counted_per_prospect(state):
 
 @pytest.mark.asyncio
 async def test_an_empty_reply_is_an_outage_not_a_bad_draft(state):
-    # On Claude a logout, rate limit, timeout or missing CLI returns "" without
+    # When Ollama has a timeout or error, it returns "" without
     # pausing the brain. Only a reply that came back unusable may count.
     pid = await add(state, 1)
     brain = FakeBrain(reply=None)

@@ -39,18 +39,6 @@ def test_render_greets_an_inbox_as_there():
 
 # ── verification ──
 
-@pytest.mark.parametrize("verdict, expected", [
-    ({"status": "safe"}, "verified"),
-    ({"status": "valid"}, "verified"),
-    ({"status": "spamtrap"}, "invalid"),
-    ({"status": "disposable"}, "invalid"),
-    ({"status": "unknown"}, None),
-    ({"status": "safe", "catch_all": True}, "risky"),
-])
-def test_reoon_verdicts(verdict, expected):
-    assert ef._status_from_verdict(verdict) == expected
-
-
 @pytest.mark.parametrize("graded, expected", [
     ("verified", "verified"),
     ("risky", "risky"),        # catch-all stays risky: send_to_risky decides
@@ -77,33 +65,6 @@ async def test_published_address_without_mail_server_is_invalid(monkeypatch):
 
     monkeypatch.setattr(ef, "get_mx_host", no_mx)
     assert await ef.verify_published_address("info@acme.com") == "invalid"
-
-
-@pytest.mark.parametrize("deliverable, expected", [(True, "valid"), ("false", "unknown"), (None, "unknown")])
-@pytest.mark.asyncio
-async def test_reoon_role_account_needs_a_real_deliverable_flag(monkeypatch, deliverable, expected):
-    class Resp:
-        status_code = 200
-
-        def json(self):
-            return {"status": "role_account", "is_deliverable": deliverable}
-
-    class Client:
-        def __init__(self, **kw):
-            pass
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *a):
-            return False
-
-        async def get(self, url, params=None):
-            return Resp()
-
-    monkeypatch.setattr(ef.httpx, "AsyncClient", Client)
-    verdict = await ef.verify_reoon("info@acme.com", "key")
-    assert verdict["status"] == expected
 
 
 # ── scout ──

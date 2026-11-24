@@ -358,63 +358,29 @@ def _ramped(email_cfg, ceiling: int, today: date) -> int:
 # ── Transports ──
 
 def _smtp_settings(row: dict, password: str):
-    from sellbird.integrations.smtp_mail import SmtpSettings
-
-    try:
-        stored = json.loads(row.get("settings_json") or "{}")
-    except ValueError:
-        stored = {}
-    if not isinstance(stored, dict):
-        stored = {}
-    known = {f.name for f in fields(SmtpSettings)} - {"password"}
-    kept = {k: v for k, v in stored.items() if k in known}
-    kept.setdefault("host", "")
-    kept.setdefault("username", row.get("address", ""))
-    return SmtpSettings(**kept, password=password)
+    return None
 
 
 def build_provider(row: dict, *, config, env, secrets: SecretStore) -> MailProvider | None:
-    """The MailProvider one extra inbox sends and reads with, or None when it
-    has none (retired, or a connection nothing knows how to build)."""
+    """The MailProvider one extra inbox sends and reads with, or None."""
     if row.get("state") == "retired":
         return None
-    address = row.get("address", "") or ""
-    identity = MailIdentity(address, (row.get("display_name") or "").strip()
-                            or identity_from_config(config).display_name)
-    connection, provider = row.get("connection", ""), row.get("provider", "")
-    if connection == "oauth":
-        tokens = KeychainTokenSource(secrets, oauth_ref(row["id"]))
-        if provider == "google":
-            from sellbird.integrations.gmail import GmailProvider
-            return GmailProvider(config, env, identity=identity, tokens=tokens)
-        if provider == "microsoft":
-            from sellbird.integrations.microsoft import MicrosoftProvider
-            return MicrosoftProvider(config, env, identity=identity, tokens=tokens)
-        return None
-    if connection == "smtp":
-        from sellbird.integrations.smtp_mail import SmtpImapProvider
-        settings = _smtp_settings(row, secrets.get(smtp_ref(row["id"])) or "")
-        return SmtpImapProvider(config, env, identity=identity, smtp=settings)
+    connection = row.get("connection", "")
     from sellbird import extensions
     builder = extensions.registry().mailbox_connections.get(connection)
-    if builder is None:
-        return None
-    return builder(row, config=config, env=env, secrets=secrets)
+    if builder is not None:
+        return builder(row, config=config, env=env, secrets=secrets)
+    return None
 
 
 # ── Connecting an inbox ──
 
 def check_provider_allows_inboxes(config) -> None:
-    from sellbird.integrations.mail_provider import NATIVE_PROVIDERS
-
     provider = (getattr(config.channels.email, "provider", "") or "").strip().lower()
-    if provider in NATIVE_PROVIDERS:
+    if provider in ("draft",):
         return
-    name = "Instantly" if provider == "instantly" else (provider or "not set")
-    raise ConnectRefused(
-        f"Your sending provider is {name}. Instantly installs send through Instantly "
-        "only. Set channels.email.provider to gmail, microsoft or smtp before "
-        "connecting inboxes.")
+    name = provider or "not set"
+    raise ConnectRefused(f"Your sending provider is {name}.")
 
 
 async def _check_address(store: MailboxStore, config, address: str) -> tuple[str, str]:

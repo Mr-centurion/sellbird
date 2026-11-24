@@ -3,7 +3,7 @@
 Scout scores every prospect 0-100 for ICP fit, but the writer used to draft
 for anyone with a deliverable address, whatever the score. With a threshold
 set, a prospect below it keeps its address and stays 'new' (no sequence, no
-Claude call); 0, the default, writes for everyone as before.
+model call); 0, the default, writes for everyone as before.
 """
 
 import logging
@@ -17,7 +17,7 @@ from tests.test_writer_retry import GOOD, FakeBrain, state, status  # noqa: F401
 
 
 def config(min_write_score=None):
-    email = {"provider": "instantly", "require_approval": False}
+    email = {"provider": "draft", "require_approval": False}
     if min_write_score is not None:
         email["min_write_score"] = min_write_score
     return SimpleNamespace(

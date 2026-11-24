@@ -5,12 +5,10 @@ analyzes, scores, and personalizes data that Python already found.
 This avoids model-level refusals when researching
 real people/companies.
 
-Search backends (in priority order):
-1. SERP API (Serper.dev) — if SERPER_API_KEY is set, reliable and fast
-2. TinyFish Search API — if TINYFISH_API_KEY is set (free, 30 searches a minute)
-3. DuckDuckGo HTML — free, no rate limiting, good fallback
-4. Bing — free, less aggressive than Google
-5. Google — aggressive rate limiting, used last
+Search backends:
+1. DuckDuckGo HTML — free, no rate limiting, good fallback
+2. Bing — free, less aggressive than Google
+3. Google — aggressive rate limiting, used last
 
 Each cycle runs 2-3 queries max to avoid rate limits. Queries are
 tracked in the DB so they spread across heartbeat cycles.
@@ -46,7 +44,6 @@ from sellbird.integrations.email_finder import (
     DEFAULT_PATTERN, SMALL_BUSINESS_PATTERN, find_email, site_email_evidence,
     verify_published_address,
 )
-from sellbird.integrations.linkedin import LinkedInAutomation
 from sellbird.models.company import Company
 from sellbird.models.prospect import COMPANY_INBOX_SOURCE, Prospect
 from sellbird.public_http import public_http_client
@@ -66,9 +63,6 @@ SCRAPE_TIMEOUT = 12.0
 MAX_RETRIES = 3
 BACKOFF_BASE = 1.5  # seconds; grows exponentially per attempt
 MAX_RESULTS_PER_QUERY = 20
-# Serper free accounts reject num > 10 with HTTP 400
-# "Query pattern not allowed for free accounts" (verified 2026-10-26).
-SERPER_MAX_NUM = 10
 MAX_COMPANIES_PER_CYCLE = 10
 
 # Reading a company's site: the homepage, then up to five pages its own menu
@@ -88,7 +82,7 @@ MAX_CONTACTS_PER_COMPANY = 2
 # source. Otherwise first.last@, and verification decides. (first@ also
 # collides as a company grows: two Johns.)
 SMALL_COMPANY_MAX = 20
-LOCAL_BUSINESS_SOURCES = ("discover:osm", "discover:dataforseo_listings")
+LOCAL_BUSINESS_SOURCES = ("discover:osm",)
 
 # Company-inbox fallback: pages that publish a general address, and the
 # only mailboxes it will use, most likely read by the owner first. An
@@ -99,12 +93,6 @@ INBOX_PREFERRED = ("owner", "office", "info", "contact", "contactus", "hello",
                    "team", "service", "sales", "estimates", "quotes",
                    "inquiries", "enquiries", "admin", "support")
 MAX_PROSPECTS_PER_CYCLE = 25
-
-# Hunter domain-searches per heartbeat. The monthly budget itself is shared
-# with email-pattern lookups and set by HUNTER_MONTHLY_SEARCHES (see
-# integrations/email_finder.py); this just paces it, since a heartbeat every
-# 15 minutes would spend a free-tier month in a few hours otherwise.
-HUNTER_DOMAINS_PER_CYCLE = 1
 
 # Rotate a small pool of realistic desktop user-agents. Scrapers that always
 # send one UA are trivially fingerprinted and blocked.
@@ -172,28 +160,15 @@ class Scout:
 
         # Each strategy is isolated so one failing does not abort the cycle.
         strategies = []
-        # Hunter first, if configured: real named people with a real
-        # verification verdict beats a scrape guess, but the free tier's
-        # monthly budget (HUNTER_MONTHLY_SEARCHES, 25 by default) is small —
-        # self-skips once it's spent.
-        strategies.append(("hunter", self._prospect_via_hunter))
         # Backfill next: companies already on file (e.g. from `sellbird
         # discover`) but with zero prospects. Scrapes each company's own
         # site directly, so it costs no search-query budget and isn't at
-        # the mercy of Serper/Bing flakiness — cheapest, most reliable win
+        # the mercy of search engine flakiness — cheapest, most reliable win
         # available before spending any queries.
         strategies.append(("known_companies", self._prospect_via_known_companies))
-        if self.config.channels.linkedin.enabled and self.env.linkedin_email:
-            strategies.append(("linkedin", self._prospect_via_linkedin))
         # Job boards first: hiring is the strongest intent signal, and the
         # strategy self-skips when python-jobspy isn't installed.
         strategies.append(("hiring_boards", self._prospect_via_hiring_boards))
-        # Web search for LinkedIn profiles yields names without a company or
-        # email, which Sellbird can't verify; it rides the same switch as the
-        # LinkedIn channel (and its login) so it is off unless LinkedIn
-        # prospecting is wanted, and doesn't spend the cycle's query budget.
-        if self.config.channels.linkedin.enabled and self.env.linkedin_email:
-            strategies.append(("profile_search", self._prospect_via_profile_search))
         strategies.append(("company_discovery", self._prospect_via_company_discovery))
 
         for name, strategy in strategies:
@@ -306,7 +281,7 @@ class Scout:
 
     def challenged(self, domain: str) -> bool:
         """True when the site answered with a bot challenge (SiteGround's
-        202, Cloudflare's "Just a moment...") — reachable, but not to us."""
+        202, CDN's "Just a moment...") — reachable, but not to us."""
         return self._host(domain) in getattr(self, "_challenged", set())
 
     async def _fetch(
@@ -392,7 +367,7 @@ class Scout:
         """Search the web using the best available backend.
 
         Returns list of (url, snippet) tuples.
-        Tries backends in order: Serper API → TinyFish Search API → DuckDuckGo → Bing → Google.
+        Tries backends in order: DuckDuckGo → Bing → Google.
         """
         if self._queries_this_cycle >= MAX_QUERIES_PER_CYCLE:
             logger.info("Scout: Query limit reached for this cycle. Will continue next cycle.")
@@ -404,18 +379,11 @@ class Scout:
         if self._queries_this_cycle > 1:
             await asyncio.sleep(random.uniform(*SEARCH_DELAY))
 
-        serper_key = getattr(self.env, "serper_api_key", "") or ""
-        tinyfish_key = getattr(self.env, "tinyfish_api_key", "") or ""
-        backends = []
-        if serper_key:
-            backends.append(lambda: self._search_serper(query, serper_key))
-        if tinyfish_key:
-            backends.append(lambda: self._search_tinyfish(query, tinyfish_key))
-        backends.extend([
+        backends = [
             lambda: self._search_duckduckgo(query),
             lambda: self._search_bing(query),
             lambda: self._search_google(query),
-        ])
+        ]
 
         for backend in backends:
             try:
@@ -443,62 +411,6 @@ class Scout:
             seen.add(norm)
             out.append((url, snippet))
         return out
-
-    async def _search_serper(self, query: str, api_key: str) -> list[tuple[str, str]]:
-        """Search via Serper.dev API — most reliable, $5/mo for 2.5k searches."""
-        resp = await self._fetch(
-            "https://google.serper.dev/search",
-            method="POST",
-            json_body={"q": query, "num": min(MAX_RESULTS_PER_QUERY, SERPER_MAX_NUM)},
-            headers={"X-API-KEY": api_key, "Content-Type": "application/json"},
-            retries=2,
-        )
-        if resp is None:
-            return []
-        try:
-            data = resp.json()
-        except (json.JSONDecodeError, ValueError) as e:
-            logger.debug(f"Serper returned non-JSON: {e}")
-            return []
-        if not isinstance(data, dict):
-            return []
-
-        results = []
-        for item in data.get("organic", []) or []:
-            if not isinstance(item, dict):
-                continue
-            url = item.get("link", "") or ""
-            snippet = item.get("snippet", "") or ""
-            if url:
-                results.append((url, snippet))
-        return results[:MAX_RESULTS_PER_QUERY]
-
-    async def _search_tinyfish(self, query: str, api_key: str) -> list[tuple[str, str]]:
-        """Search via TinyFish Search API (free with a key, 30 searches a minute)."""
-        resp = await self._fetch(
-            f"https://api.search.tinyfish.ai?query={quote_plus(query)}",
-            headers={"X-API-Key": api_key, "Accept": "application/json"},
-            retries=2,
-        )
-        if resp is None:
-            return []
-        try:
-            data = resp.json()
-        except (json.JSONDecodeError, ValueError) as e:
-            logger.debug(f"TinyFish returned non-JSON: {e}")
-            return []
-        if not isinstance(data, dict):
-            return []
-
-        results = []
-        for item in data.get("results", []) or []:
-            if not isinstance(item, dict):
-                continue
-            url = item.get("url", "") or ""
-            snippet = item.get("snippet", "") or ""
-            if url:
-                results.append((url, snippet))
-        return results[:MAX_RESULTS_PER_QUERY]
 
     async def _search_duckduckgo(self, query: str) -> list[tuple[str, str]]:
         """Search via DuckDuckGo HTML — free, no rate limiting."""
@@ -588,107 +500,6 @@ class Scout:
             logger.debug(f"Google returned {len(results)} results")
         return results[:MAX_RESULTS_PER_QUERY]
 
-    # ── Strategy -1: Hunter named contacts (quota-gated) ──
-
-    _HUNTER_STATUS_MAP = {
-        "valid": "verified",
-        "accept_all": "risky",
-        "invalid": "invalid",
-        "disposable": "invalid",
-    }
-
-    async def _prospect_via_hunter(self) -> int:
-        """Pull Hunter's actual named-people data for companies with zero
-        prospects — real name/title/email/verification, not a scrape guess.
-
-        Draws from the same rotating pool as the team-page backfill, but at
-        a much smaller pace and against the shared monthly Hunter budget.
-        """
-        api_key = getattr(self.env, "hunter_api_key", "") or ""
-        if not api_key:
-            return 0
-
-        from sellbird.integrations.email_finder import (
-            hunter_domain_people, hunter_searches_remaining, record_hunter_search,
-        )
-
-        remaining = await hunter_searches_remaining(self.state)
-        if remaining <= 0:
-            return 0
-
-        batch_size = min(remaining, HUNTER_DOMAINS_PER_CYCLE)
-        try:
-            companies = await self.state.companies_needing_prospects(limit=batch_size)
-        except Exception as e:
-            logger.debug(f"companies_needing_prospects failed: {e}")
-            return 0
-        if not companies:
-            return 0
-
-        default_industry = (
-            self.config.icp.industries[0] if self.config.icp.industries else ""
-        )
-        count = 0
-        for company in companies:
-            domain = (company.get("domain") or "").strip()
-            if not domain:
-                continue
-
-            if await self._skip_listed_company(company, domain):
-                continue
-            if await hunter_searches_remaining(self.state) <= 0:
-                break
-            await record_hunter_search(self.state)
-            people = await hunter_domain_people(domain, api_key)
-            try:
-                await self.state.mark_prospects_checked(company["id"])
-            except Exception as e:
-                logger.debug(f"mark_prospects_checked failed for {domain}: {e}")
-
-            for person in people or []:
-                if not isinstance(person, dict):
-                    continue
-                title = person.get("position") or ""
-                if not self._title_matches_icp(title):
-                    continue
-
-                verification = person.get("verification") or {}
-                hunter_status = (verification.get("status") or "").lower()
-                email_status = self._HUNTER_STATUS_MAP.get(hunter_status, "guess")
-
-                prospect = Prospect(
-                    first_name=person.get("first_name") or "",
-                    last_name=person.get("last_name") or "",
-                    email=person.get("value") or "",
-                    email_status=email_status,
-                    email_verified=(email_status == "verified"),
-                    linkedin_url=person.get("linkedin") or "",
-                    company=company.get("name") or self._domain_to_name(domain),
-                    company_id=company["id"],
-                    title=title,
-                    seniority=person.get("seniority") or self._infer_seniority(title),
-                    industry=company.get("industry") or default_industry,
-                    source="hunter_domain_search",
-                    source_url=f"https://{domain}",
-                )
-
-                if not prospect.is_valid():
-                    continue
-                if await self._is_duplicate_prospect(prospect):
-                    continue
-
-                await self.state.add_prospect(prospect)
-                self._remember_prospect(prospect)
-                count += 1
-                logger.info(
-                    f"Scout: Added {prospect.full_name()} ({prospect.title}) "
-                    f"at {prospect.company} [hunter]"
-                )
-                if count >= MAX_PROSPECTS_PER_CYCLE:
-                    return count
-
-        return count
-
     # ── Strategy 0: Known companies with zero prospects ──
 
     async def _prospect_via_known_companies(self) -> int:
@@ -755,160 +566,7 @@ class Scout:
 
         return count
 
-    # ── Strategy 1: LinkedIn ──
-
-    async def _prospect_via_linkedin(self) -> int:
-        """Search LinkedIn for ICP-matching profiles."""
-        logger.info("Scout: Searching LinkedIn...")
-        linkedin = LinkedInAutomation(
-            self.env.linkedin_email, self.env.linkedin_password
-        )
-
-        try:
-            await linkedin.start()
-            if not await linkedin.login():
-                logger.warning("Scout: LinkedIn login failed. Skipping.")
-                return 0
-
-            count = 0
-            for title in self.config.icp.titles:
-                for industry in self.config.icp.industries:
-                    keywords = f"{title} {industry}"
-                    try:
-                        profiles = await linkedin.search_people(
-                            keywords=keywords, max_results=10
-                        )
-                    except Exception as e:
-                        logger.debug(f"LinkedIn search failed for '{keywords}': {e}")
-                        continue
-
-                    for profile in profiles or []:
-                        if not isinstance(profile, dict):
-                            continue
-
-                        first_name = (profile.get("first_name") or "").strip()
-                        last_name = (profile.get("last_name") or "").strip()
-                        p_title = (profile.get("title") or title).strip()
-                        company_name = (profile.get("company") or "").strip()
-                        li_url = (profile.get("linkedin_url") or "").strip()
-
-                        domain = ""
-                        company_id = ""
-                        if company_name:
-                            try:
-                                domain = await self._guess_domain(company_name)
-                            except Exception:
-                                domain = ""
-                            if domain:
-                                company_id = await self._ensure_company(
-                                    name=company_name,
-                                    domain=domain,
-                                    industry=industry,
-                                    source="linkedin_search",
-                                )
-
-                        email = ""
-                        email_status = ""
-                        if domain and first_name and last_name:
-                            email, email_status = await self._resolve_email(
-                                first_name, last_name, domain
-                            )
-
-                        prospect = Prospect(
-                            first_name=first_name,
-                            last_name=last_name,
-                            email=email,
-                            email_status=email_status,
-                            email_verified=(email_status == "verified"),
-                            linkedin_url=li_url,
-                            company=company_name,
-                            company_id=company_id,
-                            title=p_title,
-                            seniority=self._infer_seniority(p_title),
-                            industry=industry,
-                            source="linkedin_search",
-                            source_url=li_url,
-                        )
-
-                        if not prospect.is_valid():
-                            continue
-                        if await self._is_duplicate_prospect(prospect):
-                            continue
-
-                        await self.state.add_prospect(prospect)
-                        self._remember_prospect(prospect)
-                        count += 1
-                        logger.info(
-                            f"Scout: Added prospect {prospect.full_name()} "
-                            f"at {company_name}"
-                        )
-                        if count >= MAX_PROSPECTS_PER_CYCLE:
-                            return count
-
-            return count
-
-        finally:
-            try:
-                await linkedin.stop()
-            except Exception as e:
-                logger.debug(f"LinkedIn stop failed: {e}")
-
-    # ── Strategy 2: Web search → LinkedIn profiles ──
-
-    async def _prospect_via_profile_search(self) -> int:
-        """Find LinkedIn profiles via web search (any backend)."""
-        logger.info("Scout: Searching for LinkedIn profiles...")
-        count = 0
-
-        geo = self.config.icp.geography[0] if self.config.icp.geography else ""
-        industry = self.config.icp.industries[0] if self.config.icp.industries else ""
-
-        for title in self.config.icp.titles:
-            if self._queries_this_cycle >= MAX_QUERIES_PER_CYCLE:
-                break
-
-            query = f'site:linkedin.com/in "{title}"'
-            if industry:
-                query += f' "{industry}"'
-            if geo:
-                query += f' "{geo}"'
-
-            results = await self._web_search(query)
-
-            for url, snippet in results:
-                if "/in/" not in url:
-                    continue
-
-                parsed = self._parse_linkedin_url(url, snippet)
-                if not parsed:
-                    continue
-
-                prospect = Prospect(
-                    first_name=parsed.get("first_name", ""),
-                    last_name=parsed.get("last_name", ""),
-                    linkedin_url=url,
-                    title=title,
-                    seniority=self._infer_seniority(title),
-                    industry=industry,
-                    source="web_search",
-                    source_url=url,
-                )
-
-                if not prospect.is_valid():
-                    continue
-                if await self._is_duplicate_prospect(prospect):
-                    continue
-
-                await self.state.add_prospect(prospect)
-                self._remember_prospect(prospect)
-                count += 1
-
-                if count >= 15:
-                    return count
-
-        return count
-
-    # ── Strategy 3: Find companies, then scrape team pages ──
+    # ── Strategy 2: Find companies, then scrape team pages ──
 
     async def _prospect_via_company_discovery(self) -> int:
         """Find companies via multiple methods, scrape team pages for contacts.
@@ -1576,7 +1234,7 @@ Respond ONLY with the JSON array."""
     async def _known_small(self, domain: str) -> bool:
         """Is there a size signal independent of the website? The ICP's
         company size, the company's size on file, or a local-business
-        listing (OpenStreetMap, DataForSEO Business Listings) as its source.
+        listing (OpenStreetMap) as its source.
         Three executives on a homepage say nothing about headcount."""
         def upper(text: str) -> int | None:
             nums = [int(n.replace(",", "")) for n in re.findall(r"\d[\d,]*", text or "")]
@@ -2201,36 +1859,4 @@ Respond ONLY with the JSON array."""
             return "manager"
         return "individual"
 
-    def _parse_linkedin_url(self, url: str, snippet: str) -> dict | None:
-        """Parse a LinkedIn profile URL and snippet to extract a name.
 
-        Prefers the snippet (real cased names) and falls back to the URL slug.
-        """
-        # 1) Snippet often starts with "First Last - Title at Company".
-        if snippet:
-            name_match = re.match(
-                r"^\s*([A-Z][a-z]+)\s+([A-Z][a-z'\-]+)", snippet.strip()
-            )
-            if name_match:
-                return {
-                    "first_name": name_match.group(1),
-                    "last_name": name_match.group(2),
-                }
-
-        # 2) Fall back to the URL slug.
-        match = re.search(r"/in/([\w][\w-]+)", url)
-        if match:
-            slug = match.group(1)
-            # Remove trailing hex/numeric IDs that LinkedIn appends.
-            slug = re.sub(r"-[0-9a-f]{4,}$", "", slug)
-            slug = re.sub(r"-\d+$", "", slug)
-            parts = [p for p in slug.split("-") if p]
-            # Drop pure-numeric noise tokens.
-            parts = [p for p in parts if not p.isdigit()]
-            if len(parts) >= 2:
-                return {
-                    "first_name": parts[0].title(),
-                    "last_name": " ".join(p.title() for p in parts[1:]),
-                }
-
-        return None

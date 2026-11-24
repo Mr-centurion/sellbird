@@ -182,6 +182,16 @@ class Brain:
         Retries transient failures with exponential backoff and enforces a
         hard timeout. Returns "" on unrecoverable failure.
         """
+        agent = (agent or "").strip()
+        if not agent:
+            if session_id:
+                for known in ("trainer", "scout", "writer", "handler", "analyst"):
+                    if known in session_id.lower():
+                        agent = known
+                        break
+            if not agent:
+                agent = "brain"
+
         if self.transport is not None:
             return await self._think_transport(
                 prompt,
@@ -382,7 +392,6 @@ class Brain:
                 "competitive_intel",
             ],
             "sender": ["email_frameworks", "product_knowledge"],
-            "linkedin": ["linkedin_outreach", "prospecting_tactics", "product_knowledge"],
         }
 
         skill_names = skill_map.get(agent_name, [])

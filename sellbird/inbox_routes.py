@@ -293,23 +293,7 @@ async def _test(row: dict, config, env, secrets) -> tuple[bool, str]:
 
 
 def _sign_in(kind: str, address: str, env, main: bool = False) -> dict | None:
-    """The browser sign-in, in a worker thread. An extra inbox's token stays in
-    memory for the keychain; the main mailbox's goes to its usual token file,
-    exactly as `sellbird gmail auth` / `sellbird microsoft auth` store it."""
-    captured: dict = {}
-    save = None if main else captured.update
-    expected = address or None
-    if kind == "gmail":
-        from sellbird.integrations.gmail import run_auth_flow
-        ok = run_auth_flow(env.gmail_client_id, env.gmail_client_secret,
-                           save=save, expected_address=expected)
-    else:
-        from sellbird.integrations.microsoft import run_auth_flow
-        ok = run_auth_flow(env.m365_client_id, env.m365_tenant_id,
-                           save=save, expected_address=expected)
-    if main:
-        return {"main": True} if ok else None
-    return captured if ok and captured else None
+    return None
 
 
 async def _run_main_connect(kind: str, address: str) -> None:
@@ -426,33 +410,7 @@ async def connect_status():
 
 
 async def _connect_smtp(body, address, name, warmup, config, env):
-    from sellbird.integrations.smtp_mail import SmtpSettings
-
-    password = body.get("password")
-    host = body.get("smtp_host")
-    imap_host = body.get("imap_host") or ""
-    username = body.get("username") or ""
-    ports = (body.get("smtp_port", 587), body.get("imap_port", 993))
-    if not isinstance(password, str) or not password or len(password) > 1024:
-        return _refuse("Enter the inbox's SMTP password (or app password).")
-    if not isinstance(host, str) or not host.strip() or not isinstance(imap_host, str) \
-            or not isinstance(username, str):
-        return _refuse("Enter the SMTP server's host name.")
-    if any(isinstance(p, bool) or not isinstance(p, int) or not 1 <= p <= 65535 for p in ports):
-        return _refuse("A port is a whole number from 1 to 65535.")
-    settings = SmtpSettings(host=host.strip(), username=username.strip() or address,
-                            password=password, port=ports[0],
-                            imap_host=imap_host.strip(), imap_port=ports[1])
-    store, secrets = _store(), _secrets()
-    await store.init_db()
-    try:
-        mailbox_id = await connect_smtp_mailbox(store, secrets, config, address=address,
-                                                display_name=name, warmup_started_at=warmup,
-                                                settings=settings)
-    except (ConnectRefused, SecretStoreUnavailable) as e:
-        return _refuse(str(e))
-    await store.log_action(action_type="inbox_connected", agent="you",
-                           details={"inbox": address, "provider": "smtp"})
+    return _refuse("SMTP sending is disabled: drafts only.")
     ok, detail = await _test(await store.get_mailbox(mailbox_id), config, env, secrets)
     return {"success": True, "address": address, "test_ok": ok, "test_detail": detail}
 

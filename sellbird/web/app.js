@@ -234,10 +234,9 @@ function meterHtml(pct, segments) {
 
 const SOURCE_LABELS = {
   company_website: 'Team page', known_company_backfill: 'Team page',
-  scraped_mailto: 'Published address', hunter_domain_search: 'Hunter', linkedin_search: 'LinkedIn',
+  scraped_mailto: 'Published address',
   job_board: 'Job board', web_search: 'Web search', company_inbox: 'Company inbox',
-  osm: 'OpenStreetMap', dataforseo_listings: 'DataForSEO', dataforseo_serp: 'DataForSEO SERP', dataforseo_maps: 'DataForSEO Maps',
-  serper: 'Serper', tinyfish: 'TinyFish', scavio_maps: 'Scavio Maps', scavio_search: 'Scavio Search',
+  osm: 'OpenStreetMap',
 };
 function sourceLabel(s) {
   if (!s) return '';
@@ -260,7 +259,7 @@ function actionText(a) {
     case 'write_failed': return 'Couldn’t write for some contacts' + (camp ? ' in “' + camp + '”' : '');
     case 'stage_campaign': return 'Queued ' + n(d.staged, 'email', 'emails') + ' from “' + camp + '”' +
       (d.mode ? ' · ' + escHtml(d.mode) : '');
-    case 'send_campaign': return 'Sent “' + camp + '” to Instantly · ' + n(d.leads_added, 'lead', 'leads');
+    case 'send_campaign': return 'Drafted “' + camp + '”';
     case 'email_sent': return d.kind === 'reply' ? 'Sent a reply to ' + who
       : 'Sent email ' + escHtml(String(d.step || 1)) + ' to ' + who;
     case 'reply': return 'Answered ' + who + intent;
@@ -426,7 +425,7 @@ function loadCurrentTab() {
     case 'usage': loadUsage(); break;
     case 'settings': loadSettings(); loadSendingModeCard(); break;
     case 'company': loadCompany(); break;
-    case 'controls': loadSellbirdStatus(); loadLogs(); break;
+    case 'controls': loadSellbirdStatus(); loadLogs(); loadInference(); break;
   }
 }
 
@@ -539,11 +538,8 @@ function renderFigures(stats) {
     '<div class="kpi-main"><span class="kpi-value' + (value ? '' : ' zero') + '">' + value + '</span>' + spark + '</div>' +
     '<span class="kpi-note">' + note + '</span></div>';
 
-  // Instantly sends from its own servers, so the Outbox never sees them.
-  const sent = stats.email_provider === 'instantly'
-    ? card('Emails sent', '&mdash;', '', 'Instantly tracks sends')
-    : card('Emails sent', sum(t.sent), sparkBars(t.sent, 'Emails sent per day, last 14 days'),
-           'last 14 days · <b>' + (stats.outbox_approved || 0) + '</b> scheduled');
+  const sent = card('Emails sent', sum(t.sent), sparkBars(t.sent, 'Emails sent per day, last 14 days'),
+                    'last 14 days · <b>' + (stats.outbox_approved || 0) + '</b> scheduled');
   const waiting = (stats.outbox_pending || 0) + (stats.needs_human || 0);
   const waitNote = [
     stats.outbox_pending ? stats.outbox_pending + ' to approve' : '',
@@ -726,43 +722,6 @@ async function loadSetupStatus() {
           optional.map(c => renderCheck(c, true)).join('') + '</div></details>'
         : '') +
     '</div>';
-}
-
-// The warmup step: get TrulyInbox, paste its key, or say you use another service.
-function warmupServiceActions(c) {
-  return '<div class="btn-group warmup-actions">' +
-      '<a class="btn btn-primary btn-sm" href="' + safeHref(c.link) + '" target="_blank" ' +
-        'rel="noopener sponsored">Get TrulyInbox</a>' +
-      '<input class="form-input" id="trulyinbox-key" type="password" autocomplete="off" ' +
-        'placeholder="Paste your TrulyInbox API key" aria-label="TrulyInbox API key" ' +
-        'onkeydown="if (event.key === \'Enter\') connectTrulyInbox()">' +
-      '<button class="btn btn-secondary btn-sm" id="trulyinbox-go" onclick="connectTrulyInbox()">Connect</button>' +
-      '<button class="btn btn-ghost btn-sm" onclick="useOtherWarmup()">I use another service</button>' +
-    '</div>';
-}
-
-async function connectTrulyInbox() {
-  const input = document.getElementById('trulyinbox-key');
-  const go = document.getElementById('trulyinbox-go');
-  if (!input || !input.value.trim()) return;
-  if (go) go.disabled = true;
-  const data = await api('/api/trulyinbox/connect', {
-    method: 'POST', headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({key: input.value.trim()}),
-  });
-  if (go) go.disabled = false;
-  if (data && data.success) {
-    input.value = '';
-    showToast(data.message || 'TrulyInbox connected', 'success');
-    loadSetupStatus();
-  } else {
-    showToast((data && data.message) || 'Could not connect TrulyInbox', 'error');
-  }
-}
-
-async function useOtherWarmup() {
-  const data = await api('/api/trulyinbox/other', {method: 'POST'});
-  if (data && data.success) loadSetupStatus();
 }
 
 // ── Signals: Sellbird proposes, you confirm ──
@@ -1252,114 +1211,10 @@ async function loadSettings() {
   if (!data) return;
 
   // Active provider indicator
-  const prov = data.provider || 'instantly';
+  const prov = data.provider || 'draft';
   const provEl = document.getElementById('active-provider');
   if (provEl) provEl.textContent = prov;
 
-  // Secret fields never echo a value — show a "saved" placeholder instead.
-  const savedPh = (id, isSet, base) => {
-    const el = document.getElementById(id);
-    if (!el) return;
-    el.value = '';
-    el.placeholder = isSet ? 'Saved — enter new value to change' : base;
-  };
-  const tag = (id, ok, okLabel) => {
-    const el = document.getElementById(id);
-    if (!el) return;
-    el.className = 'email-tag ' + (ok ? 'verified' : 'guess');
-    el.textContent = ok ? okLabel : 'not set';
-  };
-
-  // Non-secret values repopulate
-  document.getElementById('gmail-id').value = data.gmail_client_id || '';
-  document.getElementById('smtp-host').value = data.smtp_host || '';
-  document.getElementById('smtp-port').value = data.smtp_port || '';
-  document.getElementById('smtp-user').value = data.smtp_username || '';
-  document.getElementById('imap-host').value = data.imap_host || '';
-  document.getElementById('imap-port').value = data.imap_port || '';
-  document.getElementById('imap-user').value = data.imap_username || '';
-  document.getElementById('m365-client').value = data.m365_client_id || '';
-  document.getElementById('m365-tenant').value = data.m365_tenant_id || '';
-  document.getElementById('linkedin-email').value = data.linkedin_email || '';
-  document.getElementById('cf-account-id').value = data.cloudflare_account_id || '';
-
-  savedPh('gmail-secret', data.gmail_client_secret_set, 'Enter client secret');
-  savedPh('smtp-pass', data.smtp_password_set, 'Enter password / app password');
-  savedPh('imap-pass', data.imap_password_set, 'Same as SMTP password');
-  document.getElementById('imap-same-pass').checked = !data.imap_password_set;
-  savedPh('instantly-key', data.instantly_api_key_set, 'Enter your Instantly API key');
-  savedPh('reoon-key', data.reoon_api_key_set, '600 free/mo — reoon.com/email-verifier');
-  savedPh('zerobounce-key', data.zerobounce_api_key_set, '100 free/mo — best for M365/Workspace catch-alls');
-  savedPh('hunter-key', data.hunter_api_key_set, '50 free/mo + email-pattern lookup');
-  savedPh('linkedin-password', data.linkedin_password_set, 'Enter password');
-  savedPh('cf-api-token', data.cloudflare_api_token_set, 'Your Cloudflare API Token');
-
-  // Gmail auth status chip
-  const g = document.getElementById('gmail-status');
-  if (g) {
-    const realId = /^\d+-[0-9a-z]+\.apps\.googleusercontent\.com$/.test((data.gmail_client_id || '').trim());
-    if (data.gmail_client_id && !realId) { g.className = 'email-tag invalid'; g.textContent = 'client ID isn\'t real'; }
-    else if (data.gmail_authorized) { g.className = 'email-tag verified'; g.textContent = 'authorized'; }
-    else if (data.gmail_client_secret_set) { g.className = 'email-tag risky'; g.textContent = 'sign in on Inboxes'; }
-    else { g.className = 'email-tag guess'; g.textContent = 'not set up'; }
-  }
-  const m = document.getElementById('m365-status');
-  if (m) {
-    const realM = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test((data.m365_client_id || '').trim());
-    if (data.m365_client_id && !realM) { m.className = 'email-tag invalid'; m.textContent = 'client ID isn\'t real'; }
-    else if (data.m365_authorized) { m.className = 'email-tag verified'; m.textContent = 'authorized'; }
-    else if (data.m365_client_id) { m.className = 'email-tag risky'; m.textContent = 'sign in on Inboxes'; }
-    else { m.className = 'email-tag guess'; m.textContent = 'not set up'; }
-  }
-  tag('reoon-status', data.reoon_api_key_set, 'set');
-  tag('zerobounce-status', data.zerobounce_api_key_set, 'set');
-  tag('hunter-status', data.hunter_api_key_set, 'set');
-}
-
-function saveGmail() {
-  const payload = {GMAIL_CLIENT_ID: document.getElementById('gmail-id').value.trim()};
-  const sec = document.getElementById('gmail-secret').value;
-  if (sec) payload.GMAIL_CLIENT_SECRET = sec;
-  saveEnv(payload, 'Saved. Now sign in on the Inboxes tab.').then(loadSettings);
-}
-
-function saveSmtp() {
-  const payload = {
-    SMTP_HOST: document.getElementById('smtp-host').value.trim(),
-    SMTP_PORT: document.getElementById('smtp-port').value.trim(),
-    SMTP_USERNAME: document.getElementById('smtp-user').value.trim(),
-  };
-  const pass = document.getElementById('smtp-pass').value;
-  if (pass) payload.SMTP_PASSWORD = pass;
-  // Blank IMAP fields fall back to the SMTP ones. A typed IMAP password wins;
-  // otherwise the checkbox clears it back to the SMTP one, and an unticked
-  // empty box keeps whatever IMAP password is saved.
-  payload.IMAP_HOST = document.getElementById('imap-host').value.trim();
-  payload.IMAP_PORT = document.getElementById('imap-port').value.trim();
-  payload.IMAP_USERNAME = document.getElementById('imap-user').value.trim();
-  const imapPass = document.getElementById('imap-pass').value;
-  if (imapPass) payload.IMAP_PASSWORD = imapPass;
-  else if (document.getElementById('imap-same-pass').checked) payload.IMAP_PASSWORD = '';
-  saveEnv(payload, 'SMTP settings saved.').then(loadSettings);
-}
-
-function saveMicrosoft() {
-  const client = document.getElementById('m365-client').value.trim();
-  if (!client) { showToast('Paste the Application (client) ID first.', 'error'); return; }
-  saveEnv({M365_CLIENT_ID: client, M365_TENANT_ID: document.getElementById('m365-tenant').value.trim()},
-          'Saved. Now sign in on the Inboxes tab.').then(loadSettings);
-}
-
-function saveVerifiers() {
-  const payload = {};
-  const r = document.getElementById('reoon-key').value;
-  const z = document.getElementById('zerobounce-key').value;
-  const h = document.getElementById('hunter-key').value;
-  if (r) payload.REOON_API_KEY = r;
-  if (z) payload.ZEROBOUNCE_API_KEY = z;
-  if (h) payload.HUNTER_API_KEY = h;
-  if (!Object.keys(payload).length) { showToast('Enter at least one key first.', 'error'); return; }
-  saveEnv(payload, 'Verification keys saved.').then(loadSettings);
 }
 
 async function saveEnv(payload, okMsg) {
@@ -1369,42 +1224,6 @@ async function saveEnv(payload, okMsg) {
   });
   if (data && data.success) showToast(okMsg, 'success');
   else showToast((data && data.message) || 'Save failed — is the dashboard still running?', 'error');
-}
-
-// Secrets are only sent when typed: an empty box means "keep the saved one".
-function saveInstantly() {
-  const key = document.getElementById('instantly-key').value.trim();
-  if (!key) { showToast('Enter a new key first. The saved one is kept.', 'error'); return; }
-  saveEnv({INSTANTLY_API_KEY: key}, 'Instantly API key saved.');
-}
-
-function saveLinkedIn() {
-  const payload = {LINKEDIN_EMAIL: document.getElementById('linkedin-email').value.trim()};
-  const pass = document.getElementById('linkedin-password').value;
-  if (pass) payload.LINKEDIN_PASSWORD = pass;
-  saveEnv(payload, 'LinkedIn credentials saved.');
-}
-
-function saveCloudflare() {
-  const payload = {CLOUDFLARE_ACCOUNT_ID: document.getElementById('cf-account-id').value.trim()};
-  const token = document.getElementById('cf-api-token').value.trim();
-  if (token) payload.CLOUDFLARE_API_TOKEN = token;
-  saveEnv(payload, 'Cloudflare credentials saved.');
-}
-
-async function testInstantly() {
-  const key = document.getElementById('instantly-key').value.trim();
-  const el = document.getElementById('instantly-test-result');
-  el.innerHTML = '<div class="test-result pending">Testing&hellip;</div>';
-  const data = await api('/api/settings/test-instantly', {
-    method: 'POST', headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({api_key: key})
-  });
-  if (!data) {
-    el.innerHTML = '<div class="test-result error">Could not reach the dashboard server.</div>';
-    return;
-  }
-  el.innerHTML = '<div class="test-result ' + (data.success ? 'success' : 'error') + '">' + escHtml(failMsg(data, '')) + '</div>';
 }
 
 // ── Controls ──
@@ -1474,6 +1293,46 @@ async function loadLogs() {
   }
 }
 
+async function loadInference() {
+  const data = await api('/api/inference');
+  if (!data) return;
+
+  const statusEl = document.getElementById('inference-status');
+  const hostEl = document.getElementById('inference-host');
+  const modelEl = document.getElementById('inference-model');
+  const totalEl = document.getElementById('inference-total');
+  const tbody = document.getElementById('inference-tbody');
+
+  if (statusEl) {
+    const isReady = (data.status || '').toLowerCase().startsWith('ready');
+    statusEl.textContent = isReady ? 'Ready' : (data.status || 'Offline');
+    statusEl.style.color = isReady ? 'var(--good)' : 'var(--warn, #e06c75)';
+  }
+  if (hostEl) hostEl.textContent = data.url || 'http://localhost:11434';
+  if (modelEl) modelEl.textContent = data.model || 'qwen3:1.7b';
+  if (totalEl) totalEl.textContent = String(data.total_count || 0);
+
+  if (tbody) {
+    const rows = data.recent || [];
+    if (!rows.length) {
+      tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: var(--text-3); padding: var(--sp-4);">No local inference calls recorded yet.</td></tr>';
+    } else {
+      tbody.innerHTML = rows.map(r => {
+        const latency = r.latency_ms != null ? escHtml(String(r.latency_ms)) + ' ms' : '—';
+        const agent = r.agent ? '<span class="chip" style="font-size: 11px;">' + escHtml(r.agent) + '</span>' : '—';
+        return '<tr>' +
+          '<td>' + formatDate(r.ts) + '</td>' +
+          '<td>' + agent + '</td>' +
+          '<td>' + escHtml(r.task || '—') + '</td>' +
+          '<td><code>' + escHtml(r.model || '—') + '</code></td>' +
+          '<td><code>' + escHtml(r.host || '—') + '</code></td>' +
+          '<td>' + latency + '</td>' +
+        '</tr>';
+      }).join('');
+    }
+  }
+}
+
 // ── Pipeline data ──
 
 // Calls today per subscription — each labelled with the provider it ran on.
@@ -1510,22 +1369,6 @@ function emailTag(p) {
 
 function quotaCardHtml(data) {
   return '';
-}
-  const labels = {five_hour: '5-hour window', seven_day: 'Weekly', primary: 'Primary window',
-                  secondary: 'Secondary window', limit_reached: 'Usage limit reached'};
-  for (const [key, w] of Object.entries(data.quota)) {
-    const pct = Math.min(100, Math.max(0, w.utilization || 0));
-    const color = pct >= 80 ? 'yellow' : 'green';
-    const resets = w.resets_at ? 'resets ' + formatDate(w.resets_at) : '';
-    html += '<div class="progress-wrap">' +
-      '<div class="progress-label">' +
-        '<span class="text">' + escHtml(labels[key] || key) + (resets ? ' &middot; ' + escHtml(resets) : '') + '</span>' +
-        '<span class="pct">' + pct.toFixed(0) + '%</span>' +
-      '</div>' +
-      '<div class="progress-bar"><div class="progress-fill ' + color + '" style="width:' + pct + '%"></div></div>' +
-    '</div>';
-  }
-  return html;
 }
 
 async function loadUsage() {
@@ -1659,13 +1502,6 @@ async function loadOutbox() {
     ? '<div class="banner bad">' + icon('alert') + '<div><b>Sending is paused</b>' +
         '<p>' + escHtml(data.paused) + '. Approved mail stays queued until you resume.</p></div></div>'
     : '');
-  // Only once there is mail to warn about: a fresh install sends nothing.
-  const anyMail = pending.length || (data.approved || []).length || (data.sent || []).length;
-  if (data.compliance_notice && anyMail) {
-    banner.innerHTML +=
-      '<div class="banner wait">' + icon('alert') + '<div><b>Add your postal address</b>' +
-        '<p>' + escHtml(data.compliance_notice) + '</p></div></div>';
-  }
 
   desk.innerHTML = pending.length ? renderDesk(pending, _desk.i) :
     '<div class="card">' + emptyState(icon('check'), 'Nothing to review',
@@ -1705,8 +1541,6 @@ const CONTACT_SOURCES = {
   known_company_backfill: 'team page on their site',
   company_website: 'team page on their site',
   scraped_mailto: 'address published on their site',
-  linkedin_search: 'LinkedIn search',
-  hunter_domain_search: 'Hunter domain search',
   job_board: 'job board',
   web_search: 'web search',
 };
@@ -1756,23 +1590,18 @@ function sendingModeBanner(m) {
       '<button class="btn btn-secondary btn-sm" onclick="setSendingMode(\'approval\')"' +
         (_modeBusy ? ' disabled' : '') + '>Turn off autopilot</button></div>';
   }
-  const instantly = m.provider === 'instantly';
   return '<div class="banner mode-banner">' + icon('check') + '<div><b>Approval mode</b>' +
-    '<p>' + (instantly
-      ? 'Instantly can’t hold single emails, so campaigns aren’t sent to Instantly until you turn on autopilot.'
-      : 'Every email Sellbird writes waits here until you approve it.') +
+    '<p>Every email Sellbird writes waits here until you approve it.' +
     ' <a href="#" onclick="goTab(\'settings\');return false">About autopilot</a></p></div></div>';
 }
 
 function sendingModeCard(m) {
   if (!m) return '<div class="card muted">Couldn’t read the sending mode.</div>';
   const auto = m.mode === 'autopilot';
-  const instantly = m.provider === 'instantly';
   const domains = (m.your_domains || []).map(escHtml).join(', ') || 'none yet';
   let html = '<div class="card mode-card"><h3>Sending mode: ' + (auto ? 'Autopilot' : 'Approval') + '</h3>' +
     '<p><b>Approval</b> (the default): every email Sellbird writes, first emails, follow-ups and replies, ' +
-      'waits in the Outbox until you approve it.' +
-      (instantly ? ' On Instantly, which can’t hold single emails, that means campaigns aren’t deployed.' : '') + '</p>' +
+      'waits in the Outbox until you approve it.</p>' +
     '<p><b>Autopilot</b>: Sellbird sends on its own, on schedule, within your daily limit and quiet hours. ' +
       'Opt-outs, bounces and Pause all sending work the same. It still holds an email for you when it links ' +
       'to, or gives an address at, a site that isn’t yours, or quotes Sellbird’s own instructions: text from ' +
@@ -1781,8 +1610,7 @@ function sendingModeCard(m) {
       '. Add others under <code>channels.email.link_domains</code> in <code>' + escHtml(m.file) + '</code>.</p>';
   if (auto) {
     html += '<div class="convo-actions"><span class="muted">Turning it off works at once: emails autopilot ' +
-      'approved that haven’t gone out come back to the Outbox.' +
-      (instantly ? ' Campaigns already on Instantly keep running until you pause them there.' : '') + '</span>' +
+      'approved that haven’t gone out come back to the Outbox.</span>' +
       '<button class="btn btn-primary btn-sm" onclick="setSendingMode(\'approval\')"' +
         (_modeBusy ? ' disabled' : '') + '>Turn off autopilot</button></div>';
   } else if (_autopilotArmed) {
@@ -1831,9 +1659,7 @@ async function setSendingMode(mode) {
       showToast(mode === 'autopilot'
         ? 'Autopilot is on from Sellbird’s next cycle. Held emails still wait for you.'
         : 'Autopilot is off. Every email waits for you' +
-          (res.requeued ? '; ' + res.requeued + ' queued by autopilot came back to the Outbox.' : '.') +
-          (_sendingMode && _sendingMode.provider === 'instantly'
-            ? ' Campaigns already on Instantly keep running: pause them in Instantly.' : ''), 'success');
+          (res.requeued ? '; ' + res.requeued + ' queued by autopilot came back to the Outbox.' : '.'), 'success');
     } else {
       showToast(failMsg(res, 'Couldn’t change the sending mode.'), 'error');
     }
@@ -2694,9 +2520,8 @@ async function loadInboxes() {
   _inboxes = data;
   if (!data.native) {
     actions.innerHTML = '';
-    el.innerHTML = emptyState(icon('inboxes'), 'Instantly sends for you',
-      'Sending through several of your own inboxes works with Gmail, Microsoft 365 or SMTP. ' +
-      'Set channels.email.provider in sellbird.yaml to one of those to use it.');
+    el.innerHTML = emptyState(icon('inboxes'), 'Drafts only',
+      'Sellbird generates drafts locally to the Outbox with no network sending.');
     return;
   }
   actions.innerHTML = '<button class="btn btn-primary" onclick="openAddInbox()">' + icon('plus') +
@@ -3118,7 +2943,7 @@ setInterval(() => {
     case 'activity': loadActivity(); break;
     case 'inboxes': loadInboxes(); break;
     case 'usage': loadUsage(); break;
-    case 'controls': loadLogs(); break;
+    case 'controls': loadLogs(); loadInference(); break;
   }
 }, 15000);
 

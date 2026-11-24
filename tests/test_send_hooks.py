@@ -164,37 +164,3 @@ async def test_a_bad_header_holds_the_email(state, registry):
     await sender._drain_due()
     assert sender.provider.sent == []
     assert (await state.get_outbox_item(item))["status"] == "approved"
-
-
-@pytest.mark.asyncio
-async def test_microsoft_refuses_custom_headers_rather_than_dropping_them():
-    from types import SimpleNamespace
-
-    from sellbird.integrations.microsoft import MicrosoftProvider
-    provider = MicrosoftProvider(SimpleNamespace(persona=SimpleNamespace(name="", email="")),
-                                 SimpleNamespace())
-    assert provider.carries_headers is False
-    result = await provider.send_email("a@example.invalid", "s", "b", headers=[("X-A", "1")])
-    assert isinstance(result, SendResult) and not result.ok
-
-
-def test_gmail_and_smtp_carry_headers():
-    from sellbird.integrations.gmail import GmailProvider
-    from sellbird.integrations.smtp_mail import SmtpImapProvider
-    assert GmailProvider.carries_headers and SmtpImapProvider.carries_headers
-
-
-@pytest.mark.asyncio
-async def test_gmail_writes_the_headers_into_the_message():
-    import base64
-    import email
-
-    from sellbird.integrations import gmail
-    from tests.test_mail_identity import _config, _env, _gmail_transport, _Tokens
-    sent = []
-    provider = gmail.GmailProvider(_config(), _env(), _gmail_transport(sent),
-                                   tokens=_Tokens({"refresh_token": "r"}))
-    assert (await provider.send_email("lee@example.net", "Hello", "Hi.",
-                                      headers=[("List-Unsubscribe", "<mailto:u@example.invalid>")])).ok
-    msg = email.message_from_bytes(base64.urlsafe_b64decode(sent[0]["raw"]))
-    assert msg["List-Unsubscribe"] == "<mailto:u@example.invalid>"

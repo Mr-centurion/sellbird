@@ -106,11 +106,11 @@ def _company_answered(p: str) -> str:
 AUTOPILOT_OFF_REASON = "waiting for you: autopilot was turned off before it went out"
 # Outbox error on an approved cold email the compliance check couldn't answer
 # for: it was moved back and is tried again then (sender: _retry_later).
-RECHECK_PREFIX = "Precleared couldn't check this address; trying again after "
-# Outbox error on an approved cold email Precleared answered "unknown" for (a
+RECHECK_PREFIX = "Couldn't check this address; trying again after "
+# Outbox error on an approved cold email answered "unknown" for (a
 # fact it couldn't establish): moved back and asked again then, with what
 # would settle it (sender: _retry_later).
-UNKNOWN_HOLD_PREFIX = "Precleared couldn't settle this address; trying again after "
+UNKNOWN_HOLD_PREFIX = "Couldn't settle this address; trying again after "
 # Both notes mean "moved back by the check", and are cleared the same way.
 MOVED_BACK_PREFIXES = (RECHECK_PREFIX, UNKNOWN_HOLD_PREFIX)
 # Outbox errors starting with this: the send was cut off and the email may
@@ -575,7 +575,6 @@ MIGRATIONS: list[str] = [
 ]
 
 BRAIN_PROVIDERS = ("ollama",)
-_USAGE_LOG_COLUMN = {"ollama": "claude_calls"}
 
 # When a company was last profiled: the newer of the explicit check stamp
 # (set on every attempt, reachable or not) and its latest profile observation
@@ -592,7 +591,7 @@ _LAST_PROFILED = (
 
 # Column whitelists for dynamic UPDATEs (prevents SQL injection via kwargs).
 _CAMPAIGN_COLUMNS = frozenset({
-    "name", "channel", "instantly_campaign_id",
+    "name", "channel",
     "sequence_json", "prospect_ids_json", "status",
 })
 _CONVERSATION_COLUMNS = frozenset({
@@ -1154,8 +1153,7 @@ class StateManager:
     async def get_texts_for_prospect(self, prospect_id: str, limit: int = 50) -> list[str]:
         """Everything Sellbird wrote for this person, which a reply may quote
         back: their Outbox emails (a sent one with its footer, whatever it
-        said then) and the templates of campaigns they're in (Instantly and
-        hand sends never pass through the Outbox; merge tags unfilled)."""
+        said then) and the templates of campaigns they're in."""
         texts: list[str] = []
         async with self._connect() as db:
             async with db.execute(
@@ -2452,12 +2450,12 @@ class StateManager:
         async with self._connect() as db:
             await db.execute(
                 """INSERT INTO campaigns
-                   (id, name, channel, instantly_campaign_id, sequence_json,
+                   (id, name, channel, sequence_json,
                     prospect_ids_json, status, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
                 (
                     campaign.id, campaign.name, campaign.channel,
-                    campaign.instantly_campaign_id, campaign.sequence_json(),
+                    campaign.sequence_json(),
                     json.dumps(campaign.prospect_ids), campaign.status,
                     campaign.created_at.isoformat(),
                 ),
@@ -2622,25 +2620,22 @@ class StateManager:
     # ── Usage Tracking ──
 
     async def get_usage_today(self, provider: str = "ollama") -> int:
-        """Brain calls made today on one provider's subscription."""
-        column = _USAGE_LOG_COLUMN.get(provider, "claude_calls")
+        """Brain calls made today."""
         today = date.today().isoformat()
         async with self._connect() as db:
             async with db.execute(
-                f"SELECT {column} FROM usage_log WHERE date = ?", (today,)
+                "SELECT COUNT(*) FROM inference_log WHERE date(ts) = ?", (today,)
             ) as cursor:
                 row = await cursor.fetchone()
                 return (row[0] or 0) if row else 0
 
     async def increment_usage(self, provider: str = "ollama"):
-        column = _USAGE_LOG_COLUMN.get(provider, "claude_calls")
-        today = date.today().isoformat()
+        ts = datetime.now(timezone.utc).isoformat()
         async with self._connect() as db:
             await db.execute(
-                f"""INSERT INTO usage_log (id, date, {column})
-                   VALUES (?, ?, 1)
-                   ON CONFLICT(date) DO UPDATE SET {column} = {column} + 1""",
-                (_new_id(), today),
+                """INSERT INTO inference_log (ts, agent, task, model, host, latency_ms, status)
+                   VALUES (?, 'brain', 'usage', 'ollama', 'localhost', 0, 'ok')""",
+                (ts,),
             )
             await db.commit()
 
@@ -2795,11 +2790,10 @@ class StateManager:
             ) as cursor:
                 auto_reply_handoffs = (await cursor.fetchone())[0]
             async with db.execute(
-                "SELECT claude_calls, codex_calls FROM usage_log WHERE date = ?", (today,)
+                "SELECT COUNT(*) FROM inference_log WHERE date(ts) = ?", (today,)
             ) as cursor:
                 usage_row = await cursor.fetchone()
                 usage_today = (usage_row[0] or 0) if usage_row else 0
-                codex_today = (usage_row[1] or 0) if usage_row else 0
 
         return {
             "prospects": prospect_counts,
@@ -2817,7 +2811,8 @@ class StateManager:
             "open_conversations": open_conversations,
             "auto_reply_handoffs": auto_reply_handoffs,
             "usage_today": usage_today,
-            "usage_today_by_provider": {"ollama": usage_today, "claude": usage_today, "codex": codex_today},
+            "usage_today_by_provider": {"ollama": usage_today},
+            "ollama_calls": usage_today,
             # Companies discovered but not yet read. The heartbeat profiles
             # these every cycle — it is free, so it never competes with the
             # model call budget the rest of the loop is rationing.

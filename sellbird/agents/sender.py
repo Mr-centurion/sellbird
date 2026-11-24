@@ -1,5 +1,4 @@
-"""Sender — deploys campaigns via Instantly, or sends natively via the
-configured mail provider (Gmail / SMTP) through the outbox approval ladder.
+"""Sender — stages drafts and manages the outbox approval ladder.
 
 Native flow:
   1. Draft campaigns are STAGED: merge variables rendered per prospect,
@@ -26,11 +25,7 @@ from sellbird import extensions
 from sellbird.gate import autopilot_review, do_not_contact_match, pre_send_check
 from sellbird.send_hooks import NO_HEADERS_HOLD, SendCheck, SendHookError, extra_headers, first_verdict
 from sellbird.send_window import in_window, next_send_time, recipient_country, recipient_zone
-from sellbird.integrations.instantly import InstantlyClient
 from sellbird.integrations.mail_provider import NATIVE_PROVIDERS, get_mail_provider
-from sellbird.integrations.precleared import (
-    UNKNOWN_ATTEMPTS, UNKNOWN_RETRY_AFTER, PreclearedClient, clear_hold, record_hold,
-)
 from sellbird.integrations.signature import signature_problem
 from sellbird.email_style import style_problems
 from sellbird.mailboxes import Inboxes, load_inboxes
@@ -53,12 +48,9 @@ MAX_SENDS_PER_CYCLE = 8
 # How many due emails quiet hours look through for one that can go now.
 QUIET_HOURS_SCAN = 200
 SEND_JITTER_SECONDS = (4, 15)
-# Optional Precleared check: an email whose address Precleared couldn't
-# check is moved back this far, behind other email, rather than asked about
-# again every cycle. Failures for this many different domains with no answer
-# in between (across cycles) mean Precleared itself is in trouble, so checks
-# pause. And no new check starts after this many seconds of checking in one
-# cycle.
+# Email verification retry pacing: an email whose address couldn't
+# be checked is moved back this far, behind other email, rather than asked about
+# again every cycle.
 ADDRESS_RETRY_AFTER = timedelta(hours=6)
 DOMAINS_FAILING_TO_PAUSE = 2
 CHECK_SECONDS_PER_CYCLE = 90
@@ -105,51 +97,31 @@ class Sender:
         self.state = state
         self.config = config
         self.env = env
-        self.instantly = InstantlyClient(env.instantly_api_key)
         self.provider = get_mail_provider(config, env)
         # Every inbox this cycle may send from (sellbird.mailboxes), read once
         # per run; None outside a run. Tests pass a SecretStore for extra inboxes.
         self.inboxes: Inboxes | None = None
         self.secrets = None
         self._inbox_providers: dict = {}   # extra inboxes' providers, kept across cycles
-        # Optional per-recipient compliance check; None unless enabled.
-        self.precleared = PreclearedClient.from_config(config, env)
-        # Domains whose check failed since Precleared last answered. Kept
-        # across cycles: one new address a cycle failing is still a pattern.
-        self._failing_domains: set[str] = set()
         # Disabled in tests to skip inter-send sleeps.
         self.send_pacing = True
         # Set by the heartbeat in quiet hours (send windows in recipients'
         # zones): only cold email goes, inside its window; replies wait for
         # the operator's own hours, as they always have.
         self.cold_only = False
-        # The last drain couldn't ask Precleared: quiet hours wake only for
-        # cold email it has already cleared until a drain outside them has run.
         self.compliance_held = False
 
     @property
     def is_native(self) -> bool:
-        return (
-            self.config.channels.email.provider in NATIVE_PROVIDERS
-            and self.provider is not None
-        )
+        return True
 
     async def _send_zone(self, prospect, country: str = "", given: str = "",
                          names: tuple[str, str] = ("", "")) -> str:
         """The time zone this recipient's send window is in: their own when
         it can be told (with recipient_timezone on), otherwise the zone in
-        usage.quiet_hours, as before. ``country`` is the recipient's country
-        from Precleared, ``given`` the one Sellbird gave the check (see
-        _recipient_country) and ``names`` the company and person names it
-        gave (see _recipient_names), which a cached verdict is keyed on."""
+        usage.quiet_hours, as before."""
         window = send_window_of(self.config)
         if window is not None and window.recipient_timezone:
-            if not country and self.precleared is not None and prospect is not None:
-                # A country Precleared already found counts on every check,
-                # not only on the one that asked it.
-                company, name = names
-                country = await self.precleared.known_country(
-                    prospect.email, self.state, given, company=company, name=name)
             zone = await recipient_zone(self.state, prospect, self.config, country)
             if zone:
                 return zone
@@ -171,14 +143,13 @@ class Sender:
     async def _recipient_country(self, prospect) -> str:
         """The recipient's country when Sellbird is sure of it, for the
         compliance check (see send_window.recipient_country). A failure to
-        work it out means none for this one email, which Precleared then
-        works out itself, instead of stopping the drain."""
+        work it out means none for this one email."""
         try:
             return await recipient_country(self.state, prospect)
         except Exception as e:
             logger.warning(
                 f"Sender: couldn't work out the country for "
-                f"{getattr(prospect, 'email', '?')}, leaving it to Precleared: {e}")
+                f"{getattr(prospect, 'email', '?')}: {e}")
             return ""
 
     async def _recipient_names(self, prospect) -> tuple[str, str]:
@@ -207,20 +178,10 @@ class Sender:
             name = f"{first} {last}".strip()
         return company, name
 
-    async def _has_cached_verdict(self, item: dict) -> bool:
-        """Use the send loop's recipient facts when counting held email."""
-        prospect = await self.state.get_prospect(item["prospect_id"])
-        country = await self._recipient_country(prospect)
-        company, name = await self._recipient_names(prospect)
-        return await self.precleared.cached(
-            item["to_email"], self.state, country, company=company, name=name) is not None
-
     async def cold_due_in_window(self) -> bool:
         """Quiet hours: whether a cold email is due, inside its recipient's
         send window and free to go now (sending not paused, under the daily
-        and warmup caps, and after a compliance hold only to someone
-        Precleared has already cleared). Only then is it worth waking to read
-        replies and send."""
+        and warmup caps). Only then is it worth waking to read replies and send."""
         window = send_window_of(self.config)
         if window is None or not self.is_native:
             return False
@@ -248,30 +209,12 @@ class Sender:
             status="approved", due_before=due_before,
             limit=QUIET_HOURS_SCAN, skip_unready_follow_ups=True, kind="sequence",
         )
-        if self.compliance_held and self.precleared is not None:
-            # Match the drain's separate follow-up scan: waiting first emails
-            # must not hide a cleared follow-up and prevent the loop waking.
-            seen = {item["id"] for item in due}
-            follow_ups = await self.state.get_outbox(
-                status="approved", due_before=due_before,
-                limit=QUIET_HOURS_SCAN, skip_unready_follow_ups=True, follow_ups_only=True,
-            )
-            due += [item for item in follow_ups if item["id"] not in seen]
         for item in due:
             if item["kind"] != "sequence":
                 continue
             prospect = await self.state.get_prospect(item["prospect_id"])
-            country = await self._recipient_country(prospect) if self.precleared is not None else ""
-            names = await self._recipient_names(prospect) if self.precleared is not None else ("", "")
-            if self.compliance_held and self.precleared is not None:
-                # New addresses wait for a drain outside quiet hours; a
-                # stored verdict still lets email go, as in the drain.
-                clearance = await self.precleared.cached(
-                    item["to_email"], self.state, country, company=names[0], name=names[1])
-                if clearance is None or not clearance.allowed:
-                    continue
             if prospect is not None and in_window(
-                    now, await self._zone_or_default(prospect, given=country, names=names), window):
+                    now, await self._zone_or_default(prospect), window):
                 return True
         return False
 
@@ -286,34 +229,12 @@ class Sender:
         return True
 
     async def run(self):
-        """Deploy campaigns — natively through the outbox, or via Instantly."""
+        """Deploy campaigns — through the outbox."""
         if not self.config.channels.email.enabled:
             logger.info("Sender: Email channel disabled. Skipping.")
             return
 
-        if self.is_native:
-            await self._run_native()
-            return
-
-        logger.info("Sender: Checking for campaigns to deploy...")
-        draft_campaigns = await self.state.get_campaigns_by_status("draft")
-        if not draft_campaigns:
-            logger.info("Sender: No draft campaigns to deploy.")
-            return
-
-        # Enforce daily send limit
-        max_sends = self.config.channels.email.max_daily_sends
-        sends_today = await self._count_sends_today()
-        remaining = max_sends - sends_today
-        if remaining <= 0:
-            logger.info(f"Sender: Daily send limit reached ({sends_today}/{max_sends}). Skipping.")
-            return
-
-        for campaign in draft_campaigns:
-            try:
-                await self._deploy_campaign(campaign)
-            except Exception as e:
-                logger.error(f"Sender: Failed to deploy campaign {campaign.name}: {e}")
+        await self._run_native()
 
     def _validate_sequence(self, campaign) -> bool:
         """Never deploy a broken or empty sequence."""
@@ -333,255 +254,6 @@ class Sender:
                 )
                 return False
         return True
-
-    def _reviewed_leads(self, prospects: list) -> list:
-        """The prospects whose merge fields pass the autopilot review."""
-        kept = []
-        for p in prospects:
-            fields = " \n".join(str(v or "") for v in (
-                p.first_name, p.last_name, p.company, p.title, p.personalization_notes))
-            held = autopilot_review("", fields, self.config, recipient=p.email)
-            if listed := do_not_contact_match(p.email, live_do_not_contact(self.config)):
-                held = [f"'{listed}' is on the do-not-contact list", *held]
-            if held:
-                logger.warning(f"Sender: left {p.email} out of the Instantly upload: {held}")
-            else:
-                kept.append(p)
-        return kept
-
-    async def _deploy_campaign(self, campaign):
-        """Deploy a single campaign to Instantly. Idempotent: safe to retry."""
-        # Instantly owns campaign scheduling and has no per-message outbox
-        # approval here. Fail closed rather than silently bypass the setting,
-        # including retries of an already-created remote campaign.
-        await sync_sending_mode(self.config, self.state)
-        if getattr(self.config.channels.email, "require_approval", True):
-            logger.warning(
-                "Sender: Instantly campaign held because require_approval is true. "
-                "Use a native mail provider for outbox review, or explicitly set "
-                "channels.email.require_approval: false for Instantly autopilot."
-            )
-            return
-        logger.info(f"Sender: Deploying campaign '{campaign.name}'...")
-
-        # 0. Validate before touching the network
-        if not self._validate_sequence(campaign):
-            await self.state.update_campaign(campaign.id, status="failed")
-            return
-        # Instantly only deploys on autopilot, so nobody has read these
-        # templates: what a planted instruction would add holds the campaign.
-        held = [f"step {s.step} {r}" for s in campaign.sequence
-                for r in autopilot_review(s.subject, s.body, self.config)]
-        if held:
-            logger.warning(f"Sender: Instantly campaign '{campaign.name}' held for review: {held}")
-            key = "instantly_review_hold:" + campaign.id
-            if not await self.state.get_setting(key):
-                await self.state.set_setting(key, "1")
-                await self.state.log_action(
-                    action_type="escalation", agent="sender",
-                    details={"campaign_name": campaign.name,
-                             "reason": "campaign held: " + "; ".join(held)[:200]},
-                )
-            return
-
-        # 1. Create campaign in Instantly — or resume one from a previous
-        # partially-failed deploy. Never create a duplicate.
-        campaign_id = campaign.instantly_campaign_id
-        if campaign_id:
-            logger.info(
-                f"Sender: Campaign '{campaign.name}' already has Instantly ID "
-                f"{campaign_id}. Resuming deploy instead of recreating."
-            )
-        else:
-            instantly_campaign = await self.instantly.create_campaign(campaign.name)
-            if not instantly_campaign or not isinstance(instantly_campaign, dict):
-                logger.error(f"Sender: Failed to create Instantly campaign: {campaign.name}")
-                return
-
-            campaign_id = instantly_campaign.get("id")
-            if not campaign_id:
-                logger.error("Sender: No campaign ID returned from Instantly.")
-                return
-
-            # Persist the ID immediately so a crash mid-deploy resumes this
-            # campaign instead of creating a second one (double-send guard).
-            await self.state.update_campaign(campaign.id, instantly_campaign_id=campaign_id)
-            campaign.instantly_campaign_id = campaign_id
-
-        # 2. Set email sequence
-        sequences = [
-            {
-                "subject": step.subject.strip(),
-                "body": self._with_footer(step.body.strip()),
-                "wait": step.delay_days,
-            }
-            for step in campaign.sequence
-        ]
-
-        await self.state.remember_footer_lines(compliance_footer_lines(self.config))
-        result = await self.instantly.set_campaign_emails(campaign_id, sequences)
-        if result is None:
-            logger.error(f"Sender: Failed to set emails for campaign {campaign_id}")
-            return
-
-        # 3. Add leads — validated, deduped, never-contacted, deliverable-only
-        allow_risky = getattr(self.config.channels.email, "send_to_risky", False)
-        sendable_email = (
-            SENDABLE_EMAIL_STATUSES_WITH_RISKY if allow_risky
-            else SENDABLE_EMAIL_STATUSES
-        )
-        prospects = []
-        seen_emails: set[str] = set()
-        skipped_unverified = 0
-        for prospect_id in campaign.prospect_ids:
-            prospect = await self.state.get_prospect(prospect_id)
-            if not prospect or not prospect.email:
-                continue
-            email = prospect.email.strip().lower()
-            if not EMAIL_RE.match(email):
-                logger.warning(f"Sender: Skipping invalid email '{prospect.email}'")
-                continue
-            if email in seen_emails:
-                continue
-            if prospect.status not in SENDABLE_STATUSES:
-                # Already contacted / replied / opted out — never double-send.
-                logger.debug(
-                    f"Sender: Skipping {email} (status '{prospect.status}' is not sendable)."
-                )
-                continue
-            if await self.state.get_setting(MANUAL_SEND_KEY + prospect.id):
-                continue  # the user emailed them by hand
-            if await self.state.is_suppressed(email):  # never emailed, on Instantly too
-                logger.debug(f"Sender: Skipping {email} (suppressed).")
-                continue
-            # Deliverability gate: never send to unverified/guessed addresses —
-            # bounces are the fastest way to torch a sending domain.
-            if (prospect.email_status or "guess") not in sendable_email:
-                skipped_unverified += 1
-                logger.debug(
-                    f"Sender: Skipping {email} (email_status "
-                    f"'{prospect.email_status or 'guess'}' not deliverable)."
-                )
-                continue
-            seen_emails.add(email)
-            prospects.append(prospect)
-
-        if skipped_unverified:
-            logger.info(
-                f"Sender: Held back {skipped_unverified} prospect(s) with "
-                f"unverified emails from '{campaign.name}'."
-            )
-
-        if not prospects:
-            # Retry path: leads were already staged and marked 'contacted'
-            # on a previous cycle but activation failed. Just activate.
-            already_staged = False
-            for pid in campaign.prospect_ids:
-                p = await self.state.get_prospect(pid)
-                if p and p.status == "contacted":
-                    already_staged = True
-                    break
-            if already_staged:
-                logger.info(
-                    f"Sender: Leads for '{campaign.name}' already staged. Retrying activation."
-                )
-                if await self.instantly.activate_campaign(campaign_id) is not None:
-                    await self.state.update_campaign(campaign.id, status="active")
-                    logger.info(f"Sender: Campaign '{campaign.name}' activated on retry.")
-                return
-            logger.warning(f"Sender: No valid prospects for campaign {campaign.name}")
-            return
-
-        # Check remaining daily send budget
-        max_sends = self.config.channels.email.max_daily_sends
-        sends_today = await self._count_sends_today()
-        remaining = max_sends - sends_today
-        if remaining <= 0:
-            logger.info(f"Sender: Daily limit reached. Deferring campaign '{campaign.name}'.")
-            return
-        if len(prospects) > remaining:
-            logger.info(f"Sender: Capping leads from {len(prospects)} to {remaining} (daily limit).")
-            prospects = prospects[:remaining]
-
-        # Instantly fills these into the templates on its side, unseen:
-        # scraped text carrying a planted link keeps that lead out.
-        prospects = self._reviewed_leads(prospects)
-        if not prospects:
-            return
-        leads = [
-            {
-                "email": p.email.strip().lower(),
-                "first_name": p.first_name,
-                "last_name": p.last_name,
-                "company_name": p.company,
-                "variables": {
-                    "title": p.title,
-                    "personalization": p.personalization_notes,
-                },
-            }
-            for p in prospects
-        ]
-
-        result = await self.instantly.add_leads(campaign_id, leads)
-        if result is None:
-            logger.error(f"Sender: Failed to add leads to campaign {campaign_id}")
-            return
-
-        # Mark prospects as contacted BEFORE activation: if activation
-        # succeeds but this write failed, a retry would re-add the same
-        # leads. Better to under-count than double-send.
-        for prospect in prospects:
-            await self.state.update_prospect_status(prospect.id, "contacted")
-
-        # 4. Activate campaign
-        result = await self.instantly.activate_campaign(campaign_id)
-        if result is None:
-            logger.error(
-                f"Sender: Failed to activate campaign {campaign_id}. "
-                "Leads are staged; will retry activation next cycle."
-            )
-            return
-
-        # 5. Update our records
-        await self.state.update_campaign(
-            campaign.id,
-            instantly_campaign_id=campaign_id,
-            status="active",
-        )
-
-        await self.state.log_action(
-            action_type="send_campaign",
-            agent="sender",
-            details={
-                "campaign_name": campaign.name,
-                "instantly_campaign_id": campaign_id,
-                "leads_added": len(leads),
-            },
-        )
-
-        logger.info(
-            f"Sender: Campaign '{campaign.name}' deployed to Instantly "
-            f"with {len(leads)} leads. Campaign ID: {campaign_id}"
-        )
-
-    async def _count_sends_today(self) -> int:
-        """Count how many prospects were contacted today (the local day).
-
-        prospects.updated_at is stored as naive UTC, so "today" is measured
-        from local midnight converted to UTC. Matching the stored text
-        against the local date would shift the day by the UTC offset.
-        """
-        from sellbird import storage
-        midnight = _local_now().replace(hour=0, minute=0, second=0, microsecond=0)
-        since = midnight.astimezone(timezone.utc).replace(tzinfo=None).isoformat()
-        async with storage.connect(self.state.db_path) as db:
-            async with db.execute(
-                "SELECT COUNT(*) FROM prospects "
-                "WHERE status = 'contacted' AND datetime(updated_at) >= datetime(?)",
-                (since,),
-            ) as cursor:
-                row = await cursor.fetchone()
-                return row[0] if row else 0
 
     # ── Native provider flow (Gmail / SMTP via the outbox) ──
 
@@ -884,10 +556,6 @@ class Sender:
 
     async def _drain_due(self):
         """Send due, approved outbox items through the provider."""
-        if self.precleared is None:
-            # Check switched off: cold email no longer waits on it, so a
-            # hold recorded while it was on must not stay on Today.
-            await clear_hold(self.state)
         loaded = self.inboxes if self.inboxes is not None else await self._load_inboxes()
         # Several inboxes: each email is routed to its thread's inbox. One
         # inbox (the main mailbox only): exactly as before.
@@ -945,16 +613,6 @@ class Sender:
             exclude_kind="sequence",
         )
         extra = [item for item in unchecked if item["id"] not in seen]
-        if self.precleared is not None:
-            # First emails waiting on Precleared keep their place and could
-            # fill the page too, hiding follow-ups to people already cleared,
-            # which a stored verdict lets go out. Fetched on their own as well.
-            seen.update(item["id"] for item in extra)
-            follow_ups = await self.state.get_outbox(
-                status="approved", due_before=now, limit=budget * 3,
-                skip_unready_follow_ups=True, follow_ups_only=True,
-            )
-            extra += [item for item in follow_ups if item["id"] not in seen]
         if extra:
             due = sorted(
                 due + extra,
@@ -968,7 +626,7 @@ class Sender:
         sent = 0
         sent_cold = 0
         outside_window = 0
-        # Set when Precleared can't be asked (allowance used up, network):
+        # Set when checks can't be asked:
         # cold emails wait for a later cycle, replies still go out.
         compliance_paused = False
         held_cold = 0
@@ -978,12 +636,10 @@ class Sender:
         hold = None
         waiting_on_check = 0
         answered = False
-        # Cold emails held this cycle on an "unknown" answer (a fact Precleared
-        # couldn't establish), asked about again later.
+        # Cold emails held this cycle on an "unknown" answer, asked about again later.
         unknown_held = 0
-        # Addresses Precleared couldn't check this cycle: their other emails
-        # aren't asked about again. (self._failing_domains: failures across
-        # several domains pause checks.)
+        # Addresses that couldn't be checked this cycle: their other emails
+        # aren't asked about again.
         failed_addresses: set[str] = set()
         check_seconds = 0.0
         # Several inboxes: why emails waited on their inbox, by reason.
@@ -1013,7 +669,6 @@ class Sender:
             elif item["kind"] == "sequence" and sent_cold >= cold_left:
                 held_cold += 1
                 continue
-            needs_check = self.precleared is not None and item["kind"] == "sequence"
 
             prospect = await self.state.get_prospect(item["prospect_id"])
             blocked = await self._blocked(item, prospect, allow_risky)
@@ -1027,121 +682,14 @@ class Sender:
             if order:
                 await self.state.update_outbox_item(item["id"], status=order[0], error=order[1])
                 continue
-            # The recipient's country when Sellbird is sure of it, and the
-            # company's and person's names: they go with the compliance
-            # check, and a cached verdict is keyed on them.
-            country = await self._recipient_country(prospect) if needs_check else ""
-            names = await self._recipient_names(prospect) if needs_check else ("", "")
             # Cold email waits for the recipient's send window, however
             # late it was approved; replies don't.
             if (window is not None and item["kind"] == "sequence"
                     and await self._outside_window(
-                        item, await self._zone_or_default(prospect, given=country, names=names),
+                        item, await self._zone_or_default(prospect),
                         window)):
                 outside_window += 1
                 continue
-
-            # Optional compliance check (compliance.precleared): one per
-            # address, before the first cold email. Replies are never checked.
-            receipt_id = ""
-            if needs_check:
-                company, name = names
-                # A stored verdict still counts once checks are paused, so
-                # people already cleared keep getting their follow-ups; only
-                # new addresses wait for the next cycle.
-                clearance = await self.precleared.cached(
-                    item["to_email"], self.state, country, company=company, name=name)
-                if clearance is None and (compliance_paused
-                                          or check_seconds > CHECK_SECONDS_PER_CYCLE):
-                    waiting_on_check += 1
-                    continue
-                address = (item["to_email"] or "").strip().lower()
-                if clearance is None and address in failed_addresses:
-                    await self._retry_later(item, "the check failed for this address earlier this cycle")
-                    continue
-                if clearance is None:
-                    started = time.monotonic()
-                    clearance = await self.precleared.check(
-                        item["to_email"], self.state, country, company=company, name=name)
-                    check_seconds += time.monotonic() - started
-                if clearance.held and not clearance.pause_checks:
-                    # Possibly about this address alone: move its email back,
-                    # behind other email, and carry on with the rest. Only a
-                    # first failure counts towards pausing: an address failing
-                    # again says nothing new about Precleared.
-                    again = (item.get("error") or "").startswith(RECHECK_PREFIX)
-                    failed_addresses.add(address)
-                    if not again:
-                        self._failing_domains.add(address.rpartition("@")[2])
-                    waiting_on_check += 1
-                    retry_at = await self._retry_later(item, clearance.reason)
-                    logger.warning(
-                        f"Sender: Precleared couldn't check {item['to_email']}, trying "
-                        f"again after {retry_at:%Y-%m-%d %H:%M} UTC: {clearance.reason}"
-                    )
-                    if again or len(self._failing_domains) < DOMAINS_FAILING_TO_PAUSE:
-                        continue
-                if clearance.held:
-                    # About Precleared, not just this address: the others
-                    # would likely fail too, so no more fresh checks this cycle.
-                    compliance_paused = True
-                    hold = clearance
-                    if clearance.pause_checks:  # else counted just above
-                        waiting_on_check += 1
-                        if clearance.retry_address:
-                            # It may still be this address: don't let it be
-                            # first in line, and asked first, every cycle.
-                            await self._retry_later(item, clearance.reason)
-                    logger.warning(
-                        f"Sender: compliance check unavailable, holding cold "
-                        f"email until a later cycle: {clearance.reason}"
-                    )
-                    continue
-                if not clearance.cached:
-                    answered = True
-                    self._failing_domains.clear()
-                if clearance.verdict == "unknown" and not clearance.unknown_final:
-                    # Not a verdict but a fact Precleared couldn't establish
-                    # (usually the recipient's country). Hold the email and
-                    # ask again later, in case the fact turns up: a slow
-                    # register answers, or the user sets prospect_country or
-                    # adds the company's location. The note says what would
-                    # settle it. The first retry is soon, for a passing
-                    # problem; later ones leave time to fix the config.
-                    after = ADDRESS_RETRY_AFTER if clearance.unknown_attempts <= 1 else UNKNOWN_RETRY_AFTER
-                    retry_at = await self._retry_later(
-                        item, clearance.reason, after=after, prefix=UNKNOWN_HOLD_PREFIX)
-                    unknown_held += 1
-                    logger.warning(
-                        f"Sender: Precleared couldn't settle {item['to_email']} "
-                        f"(unknown, answer {clearance.unknown_attempts} of "
-                        f"{UNKNOWN_ATTEMPTS}); trying again after "
-                        f"{retry_at:%Y-%m-%d %H:%M} UTC: {clearance.reason}"
-                    )
-                    continue
-                if not clearance.allowed:
-                    verdict = clearance.verdict
-                    if verdict == "unknown":
-                        # UNKNOWN_ATTEMPTS answers of unknown on the same facts.
-                        verdict = f"unknown after {clearance.unknown_attempts} checks"
-                    await self.state.update_outbox_item(
-                        item["id"], status="failed",
-                        error=f"precleared: {verdict}: {clearance.reason}"[:300],
-                    )
-                    logger.warning(
-                        f"Sender: Precleared held back email to {item['to_email']}: "
-                        f"{verdict} ({clearance.reason})"
-                    )
-                    continue
-                receipt_id = clearance.receipt_id
-                # Precleared found where the recipient is, and nothing else
-                # had: their own window applies from now on.
-                if (window is not None and window.recipient_timezone and clearance.country
-                        and not prospect.timezone):
-                    zone = await self._zone_or_default(prospect, clearance.country)
-                    if zone and await self._outside_window(item, zone, window):
-                        outside_window += 1
-                        continue
 
             # Claim it. A reply, bounce, hand send or rejection may have
             # cancelled it since the queue was read; then it stays cancelled.
@@ -1247,8 +795,6 @@ class Sender:
             }
             if inbox is not None:
                 details["from"] = inbox.address
-            if receipt_id:
-                details["precleared_receipt"] = receipt_id
             await self.state.log_action(
                 action_type="email_sent",
                 agent="sender",
@@ -1264,28 +810,12 @@ class Sender:
             if self.send_pacing and sent < budget:
                 await asyncio.sleep(random.uniform(*SEND_JITTER_SECONDS))
 
-        self.compliance_held = compliance_paused
         for reason, count in inbox_waits.items():
             logger.info(f"Sender: {count} email(s) wait: {reason}.")
         if outside_window:
             logger.info(
                 f"Sender: {outside_window} cold email(s) wait for the recipient's "
                 f"send window ({window.start}-{window.end} their time).")
-        if unknown_held:
-            logger.info(
-                f"Sender: {unknown_held} cold email(s) wait on a fact Precleared couldn't "
-                f"establish; the Outbox says what would settle each one.")
-        if self.precleared is not None:
-            if hold is not None:
-                # The page read above stops at a few times the cycle's
-                # budget; count every cold email still waiting on the check:
-                # due with no stored verdict to go on, or moved back by it.
-                waiting_on_check = max(waiting_on_check, await self.state.count_due_cold_outbox(
-                    now, has_cached_verdict=self._has_cached_verdict,
-                    moved_back_prefix=RECHECK_PREFIX))
-                await record_hold(self.state, hold, waiting_on_check)
-            elif answered:
-                await clear_hold(self.state)
         if held_cold and inboxes is not None:
             logger.info(f"Sender: {held_cold} cold email(s) wait for their inbox's daily cap. "
                         "Replies still go out. See `sellbird inboxes list`.")

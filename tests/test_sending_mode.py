@@ -240,8 +240,6 @@ def test_the_outbox_says_which_mode_and_offers_the_way_out():
     assert "Approval mode" in approval and "waits here until you approve it" in approval
     auto = _render("sendingModeBanner", {**MODE, "mode": "autopilot", "held": 2})
     assert "Autopilot is on" in auto and "(2 now)" in auto and "Turn off autopilot" in auto
-    instantly = _render("sendingModeBanner", {**MODE, "provider": "instantly"})
-    assert "campaigns aren’t sent to Instantly" in instantly
 
 
 def test_settings_explains_both_and_asks_for_the_word():
@@ -317,7 +315,7 @@ def test_the_writer_keeps_a_symlinked_config_a_symlink(tmp_path, yaml_file):
 
 def test_a_file_that_isnt_utf8_is_refused_not_mangled(tmp_path, yaml_file):
     path = tmp_path / "latin.yaml"
-    path.write_bytes(yaml_file.read_bytes().replace(b"# native", "# café native".encode("latin-1")))
+    path.write_bytes(yaml_file.read_bytes() + b"\n# caf\xe9\n")
     before = path.read_bytes()
     with pytest.raises(ConfigError):
         set_require_approval(False, path)

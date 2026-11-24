@@ -47,7 +47,6 @@ def test_default_home_follows_patched_dashboard_db_path(monkeypatch, tmp_path):
 
 def test_default_home_reads_legacy_globals():
     import sellbird.dashboard as dash
-    import sellbird.integrations.microsoft as ms
     from sellbird.paths import PROJECT_ROOT
 
     h = default_home()
@@ -55,11 +54,10 @@ def test_default_home_reads_legacy_globals():
     assert h.config_file is None and not h.hosted
     assert h.dashboard_token_file == dash.TOKEN_FILE
     assert h.agent_token_file == h.data_dir / "agent-token"
-    assert h.m365_token_file == ms.TOKEN_FILE
+    assert h.m365_token_file == h.data_dir / "m365_token.json"
     assert h.env_file == PROJECT_ROOT / ".env"
     assert h.prompts_dir == PROJECT_ROOT / "prompts"
     assert h.skills_dir == PROJECT_ROOT / "skills"
-
 
 def test_use_home_sets_and_resets(tmp_path):
     a = Home.for_root(tmp_path / "a")

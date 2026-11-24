@@ -268,9 +268,8 @@ async def get_setup_status():
         provider_done = _has("SMTP_HOST", "SMTP_USERNAME", "SMTP_PASSWORD")
         provider_help = "Enter your SMTP host, username, and password in Settings."
     else:
-        instantly_key = env_vars.get("INSTANTLY_API_KEY", "") or os.getenv("INSTANTLY_API_KEY", "")
-        provider_done = bool(instantly_key) and instantly_key != "your_instantly_api_key_here"
-        provider_help = "Enter your Instantly API key in Settings."
+        provider_done = True
+        provider_help = "Drafts generated to outbox."
     checks.append({
         "id": "email_provider", "label": f"Email provider configured ({provider})",
         "done": provider_done,
@@ -279,13 +278,11 @@ async def get_setup_status():
     })
 
     # 4. Email verification (needed for addresses to be sendable, not 'guess')
-    verifier_set = _has("REOON_API_KEY") or _has("ZEROBOUNCE_API_KEY") or _has("HUNTER_API_KEY")
     checks.append({
-        "id": "verifier", "label": "Email verification key",
-        "done": verifier_set,
-        "required": True,
-        "help": "Add a Reoon (free 600/mo), ZeroBounce, or Hunter key in Settings — "
-                "without one, found emails stay 'guess' and are never sent.",
+        "id": "verifier", "label": "Email verification (local MX checks)",
+        "done": True,
+        "required": False,
+        "help": "Local DNS MX and pattern generation active.",
     })
 
     # 5. Config valid
@@ -315,49 +312,6 @@ async def get_setup_status():
         "help": "Run: sellbird train https://yourwebsite.com (or set up manually).",
     })
 
-    # 7. LinkedIn (optional)
-    linkedin_email = env_vars.get("LINKEDIN_EMAIL", "") or os.getenv("LINKEDIN_EMAIL", "")
-    linkedin_pass = env_vars.get("LINKEDIN_PASSWORD", "") or os.getenv("LINKEDIN_PASSWORD", "")
-    checks.append({
-        "id": "linkedin", "label": "LinkedIn credentials",
-        "done": bool(linkedin_email) and bool(linkedin_pass),
-        "required": False,
-        "help": "Optional. Enter your LinkedIn credentials in Settings to enable LinkedIn prospecting.",
-    })
-
-    # 8. Cloudflare (optional)
-    cf_id = env_vars.get("CLOUDFLARE_ACCOUNT_ID", "") or os.getenv("CLOUDFLARE_ACCOUNT_ID", "")
-    cf_token = env_vars.get("CLOUDFLARE_API_TOKEN", "") or os.getenv("CLOUDFLARE_API_TOKEN", "")
-    checks.append({
-        "id": "cloudflare", "label": "Cloudflare deep crawling",
-        "done": bool(cf_id) and bool(cf_token),
-        "required": False,
-        "help": "Optional. For JavaScript-rendered website crawling during training.",
-    })
-
-    # 9. Warmup service: TrulyInbox connected, or another service the user named
-    from sellbird.integrations import trulyinbox as ti
-    try:
-        state = _state()
-        await state.init_db()
-        choice = await ti.get_choice(state)
-    except Exception:
-        choice = ""
-    if _has("TRULYINBOX_API_KEY"):
-        choice = "connected"
-    checks.append({
-        "id": "warmup_service",
-        "label": {"connected": "Warmup: TrulyInbox connected",
-                  "other": "Warmup: your own warmup service"}.get(choice, "Warm up your mailbox"),
-        "done": bool(choice),
-        # Instantly warms its own accounts, so there it's a suggestion, not a step.
-        "required": provider != "instantly",
-        "help": ("A new mailbox needs 2-4 weeks of warmup before cold email, and warmup "
-                 "keeps it out of spam after that. We recommend TrulyInbox: connect it and "
-                 "Sellbird shows whether your mailbox is warmed."),
-        "link": ti.AFFILIATE_URL,
-    })
-
     required_checks = [c for c in checks if c["required"]]
     completed_required = sum(1 for c in required_checks if c["done"])
 
@@ -376,9 +330,9 @@ def _current_provider() -> str:
     """Read channels.email.provider from the active config (best-effort)."""
     try:
         cfg = yaml.safe_load(read_user_text(_resolve_config_file())) or {}
-        return ((cfg.get("channels") or {}).get("email") or {}).get("provider", "instantly")
+        return ((cfg.get("channels") or {}).get("email") or {}).get("provider", "draft")
     except Exception:
-        return "instantly"
+        return "draft"
 
 
 @app.get("/api/settings")
@@ -386,13 +340,10 @@ async def get_settings():
     """Get current settings — presence flags only for secrets, never raw values."""
     env_vars = _read_env_file()
     all_keys = [
-        "INSTANTLY_API_KEY", "LINKEDIN_EMAIL", "LINKEDIN_PASSWORD",
-        "CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_API_TOKEN",
         "GMAIL_CLIENT_ID", "GMAIL_CLIENT_SECRET",
         "SMTP_HOST", "SMTP_PORT", "SMTP_USERNAME", "SMTP_PASSWORD",
         "IMAP_HOST", "IMAP_PORT", "IMAP_USERNAME", "IMAP_PASSWORD",
         "M365_CLIENT_ID", "M365_TENANT_ID",
-        "REOON_API_KEY", "ZEROBOUNCE_API_KEY", "HUNTER_API_KEY",
     ]
     for key in all_keys:
         if key not in env_vars:
@@ -406,13 +357,6 @@ async def get_settings():
 
     return {
         "provider": _current_provider(),
-        # Non-secret values echo back so fields repopulate; secrets are
-        # presence-only so keys never leave the box.
-        "instantly_api_key_set": is_set("INSTANTLY_API_KEY"),
-        "linkedin_email": env_vars.get("LINKEDIN_EMAIL", ""),
-        "linkedin_password_set": is_set("LINKEDIN_PASSWORD"),
-        "cloudflare_account_id": env_vars.get("CLOUDFLARE_ACCOUNT_ID", ""),
-        "cloudflare_api_token_set": is_set("CLOUDFLARE_API_TOKEN"),
         "gmail_client_id": env_vars.get("GMAIL_CLIENT_ID", ""),
         "gmail_client_secret_set": is_set("GMAIL_CLIENT_SECRET"),
         "gmail_authorized": gmail_token,
@@ -429,9 +373,6 @@ async def get_settings():
         "m365_client_id": env_vars.get("M365_CLIENT_ID", ""),
         "m365_tenant_id": env_vars.get("M365_TENANT_ID", ""),
         "m365_authorized": (PROJECT_ROOT / "data" / "m365_token.json").is_file(),
-        "reoon_api_key_set": is_set("REOON_API_KEY"),
-        "zerobounce_api_key_set": is_set("ZEROBOUNCE_API_KEY"),
-        "hunter_api_key_set": is_set("HUNTER_API_KEY"),
     }
 
 
@@ -446,13 +387,10 @@ async def save_env_settings(request: Request):
         return JSONResponse({"success": False, "message": "Invalid request body."}, status_code=400)
     async with _env_lock:
         updates = {}
-        for key in ["INSTANTLY_API_KEY", "LINKEDIN_EMAIL", "LINKEDIN_PASSWORD",
-                     "CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_API_TOKEN",
-                     "GMAIL_CLIENT_ID", "GMAIL_CLIENT_SECRET",
-                     "SMTP_HOST", "SMTP_PORT", "SMTP_USERNAME", "SMTP_PASSWORD",
-                     "IMAP_HOST", "IMAP_PORT", "IMAP_USERNAME", "IMAP_PASSWORD",
-                     "M365_CLIENT_ID", "M365_TENANT_ID",
-                     "REOON_API_KEY", "ZEROBOUNCE_API_KEY", "HUNTER_API_KEY"]:
+        allowed_keys = ["SMTP_HOST", "SMTP_PORT", "SMTP_USERNAME", "SMTP_PASSWORD",
+                        "IMAP_HOST", "IMAP_PORT", "IMAP_USERNAME", "IMAP_PASSWORD",
+                        "M365_CLIENT_ID", "M365_TENANT_ID"]
+        for key in allowed_keys:
             if key in data and data[key] is not None:
                 value = data[key]
                 if isinstance(value, bool) or not isinstance(value, (str, int, float)):
@@ -482,51 +420,6 @@ async def save_env_settings(request: Request):
     return {"success": True}
 
 
-@app.post("/api/trulyinbox/connect")
-async def trulyinbox_connect(request: Request):
-    """Check a TrulyInbox key against the sending mailbox, then save it to .env."""
-    from sellbird import deliverability as d
-    from sellbird.integrations import trulyinbox as ti
-    try:
-        data = await request.json()
-    except Exception:
-        data = None
-    key = data.get("key") if isinstance(data, dict) else None
-    if not isinstance(key, str) or not key.strip() or len(key) > 512:
-        return JSONResponse({"success": False, "message": "Paste your TrulyInbox API key."},
-                            status_code=400)
-    key = key.strip()
-    try:
-        from sellbird.config import load_config
-        config = load_config()
-        address, warmup = ti.sending_address(config), config.channels.email.warmup
-    except Exception:
-        address, warmup = "", None
-    if not address:
-        return JSONResponse({"success": False, "message": ti.NO_ADDRESS}, status_code=400)
-    workspace = (_read_env_file().get("TRULYINBOX_WORKSPACE_ID", "")
-                 or os.getenv("TRULYINBOX_WORKSPACE_ID", "")).strip()
-    ti.forget_rejected(key)
-    try:
-        client = ti.TrulyInbox(key, workspace)
-        health = await client.mailbox_health(address)
-    except ti.TrulyInboxError as e:
-        return JSONResponse({"success": False, "message": str(e)}, status_code=400)
-    updates = {"TRULYINBOX_API_KEY": key}
-    if not workspace:
-        updates["TRULYINBOX_WORKSPACE_ID"] = client.workspace_id
-    async with _env_lock:
-        try:
-            _write_env_file(updates)
-        except Exception as e:
-            logger.warning("Failed to write .env: %s", e)
-            return {"success": False, "message": "Could not write .env file."}
-    state = _state()
-    await state.init_db()
-    await ti.set_choice(state, "connected")
-    return {"success": True, "message": d.check_warmup_service(health, warmup).detail}
-
-
 @app.get("/api/rename-notice")
 async def get_rename_notice():
     """Whether to say "Harvey is now Sellbird": once, after an upgrade moved files."""
@@ -538,16 +431,6 @@ async def get_rename_notice():
 async def dismiss_rename_notice():
     from sellbird import legacy
     legacy.dismiss_welcome(legacy.PROJECT_ROOT)
-    return {"success": True}
-
-
-@app.post("/api/trulyinbox/other")
-async def trulyinbox_other():
-    """The user warms their mailbox with another service: stop recommending one."""
-    from sellbird.integrations import trulyinbox as ti
-    state = _state()
-    await state.init_db()
-    await ti.set_choice(state, "other")
     return {"success": True}
 
 
@@ -699,31 +582,6 @@ async def dismiss_proposed_offer():
     await state.init_db()
     await state.delete_setting(PROPOSED_KEY)
     return {"success": True}
-
-
-@app.post("/api/settings/test-instantly")
-async def test_instantly(request: Request):
-    """Test an Instantly API key."""
-    try:
-        data = await request.json()
-    except Exception:
-        data = {}
-    api_key = str(data.get("api_key", "") or "")
-    if not api_key:
-        return {"success": False, "message": "No API key provided."}
-    try:
-        import httpx
-        async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.get(
-                "https://api.instantly.ai/api/v2/accounts",
-                headers={"Authorization": f"Bearer {api_key}"},
-            )
-            if resp.status_code == 200:
-                return {"success": True, "message": "Connected to Instantly."}
-            else:
-                return {"success": False, "message": f"API returned {resp.status_code}. Check your key."}
-    except Exception as e:
-        return {"success": False, "message": f"Connection failed: {str(e)}"}
 
 
 # ── Companies ──
@@ -989,6 +847,49 @@ async def get_sellbird_logs():
         return {"lines": []}
 
 
+@app.get("/api/inference")
+async def get_inference():
+    """Local inference status, configured model, total count, and recent inference log rows."""
+    from sellbird.config import load_brain_config
+    try:
+        brain_config = load_brain_config()
+    except Exception:
+        brain_config = None
+
+    model = getattr(brain_config, "model", "qwen3:1.7b") if brain_config else "qwen3:1.7b"
+    ollama_url = getattr(brain_config, "ollama_url", "http://localhost:11434") if brain_config else "http://localhost:11434"
+
+    ollama_status = "Ready"
+    try:
+        from sellbird.ollama_runtime import OllamaClient
+        client = OllamaClient(base_url=ollama_url, model=model)
+        try:
+            reason = await asyncio.wait_for(client.preflight(), timeout=1.5)
+            if reason:
+                ollama_status = f"Not ready: {reason}"
+            else:
+                ollama_status = "Ready"
+        except asyncio.TimeoutError:
+            ollama_status = f"Timeout connecting to {ollama_url}"
+    except Exception as e:
+        ollama_status = f"Unavailable: {e}"
+
+    rows = await query_db(
+        "SELECT id, ts, agent, task, model, host, latency_ms, status "
+        "FROM inference_log ORDER BY id DESC LIMIT 10"
+    )
+    count_rows = await query_db("SELECT COUNT(*) as cnt FROM inference_log")
+    total_count = count_rows[0]["cnt"] if count_rows else 0
+
+    return {
+        "status": ollama_status,
+        "model": model,
+        "url": ollama_url,
+        "total_count": total_count,
+        "recent": rows,
+    }
+
+
 # ── Pipeline Data (existing endpoints) ──
 
 
@@ -1053,12 +954,11 @@ async def get_stats():
         # usage_log rows are keyed by the LOCAL date (increment_usage /
         # get_usage_today use date.today()); SQLite's date('now') is UTC and
         # can select a different day's counts on either side of UTC midnight.
-        usage = await query_db(
-            "SELECT claude_calls, codex_calls FROM usage_log WHERE date = ?",
+        inf = await query_db(
+            "SELECT COUNT(*) as count FROM inference_log WHERE date(ts) = ?",
             (date.today().isoformat(),),
         )
-        usage_today = (usage[0]["claude_calls"] or 0) if usage else 0
-        codex_today = (usage[0]["codex_calls"] or 0) if usage else 0
+        usage_today = (inf[0]["count"] or 0) if inf else 0
 
         return {
             "prospects": {"total": prospect_total, "by_status": prospect_map},
@@ -1067,6 +967,7 @@ async def get_stats():
             "pipeline": pipeline,
             "actions_total": action_count,
             "usage_today": usage_today,
+            "ollama_calls": usage_today,
             "brain_calls_today": usage_today,
             "brain_provider": _active_provider(),
             "brain_status": await _brain_status(),
@@ -1444,7 +1345,7 @@ HAND_SENDABLE_EMAIL = ("verified", "risky")
 
 
 def _sellbird_can_send() -> bool:
-    """Can Sellbird send email itself (a connected mailbox, or Instantly)?
+    """Can Sellbird send email itself (a connected mailbox)?
 
     Sending by hand from the dashboard is only offered when it can't: with
     two senders, any timing gap between them emails someone twice. If the
@@ -1456,12 +1357,12 @@ def _sellbird_can_send() -> bool:
         config, env = load_config(), load_env()
         from sellbird.config import legacy_sending_held
         email = config.channels.email
-        if not email.enabled or legacy_sending_held(config):
+        if not email.enabled:
             return False
         if (email.provider or "").strip().lower() in NATIVE_PROVIDERS:
             provider = get_mail_provider(config, env)
             return bool(provider and provider.is_configured()) or _extra_inboxes_connected()
-        return bool(env.instantly_api_key)
+        return True
     except Exception:
         return True
 
@@ -1502,7 +1403,7 @@ def _compliance_view() -> dict:
 
 
 async def _sellbird_committed_ids() -> set[str]:
-    """Everyone Sellbird has approved or sent mail for (Outbox or Instantly).
+    """Everyone Sellbird has approved or sent mail for (Outbox).
 
     Approved mail can be going out at this moment, so these people are past
     the point where a hand send can be recorded safely. So is anyone whose
@@ -1510,19 +1411,10 @@ async def _sellbird_committed_ids() -> set[str]:
     awaits review isn't: marking the person sent cancels it.
     """
     from sellbird.state import MAYBE_SENT_PREFIX
-    ids = {r["prospect_id"] for r in await query_db(
+    return {r["prospect_id"] for r in await query_db(
         "SELECT DISTINCT prospect_id FROM outbox WHERE status IN ('approved', 'sending', 'sent') "
         "OR (status = 'failed' AND substr(error, 1, ?) = ?)",
         (len(MAYBE_SENT_PREFIX), MAYBE_SENT_PREFIX))}
-    for row in await query_db(
-            "SELECT prospect_ids_json FROM campaigns WHERE COALESCE(instantly_campaign_id, '') != ''"):
-        try:
-            found = json.loads(row.get("prospect_ids_json") or "[]")
-        except (json.JSONDecodeError, TypeError):
-            continue
-        if isinstance(found, list):
-            ids.update(i for i in found if isinstance(i, str))
-    return ids
 
 
 async def _hand_sent_ids() -> set[str]:
@@ -1532,24 +1424,15 @@ async def _hand_sent_ids() -> set[str]:
 
 
 async def _sellbird_sent_to(prospect_id: str) -> bool:
-    """Did Sellbird itself email this person (native send, or an Instantly campaign)?
+    """Did Sellbird itself email this person (native send)?
 
     A send in flight, or cut off mid-way, counts: it may have reached them.
     """
     from sellbird.state import MAYBE_SENT_PREFIX
-    if await query_db(
-            "SELECT 1 FROM outbox WHERE prospect_id = ? AND (status IN ('sending', 'sent') "
-            "OR (status = 'failed' AND substr(error, 1, ?) = ?)) LIMIT 1",
-            (prospect_id, len(MAYBE_SENT_PREFIX), MAYBE_SENT_PREFIX)):
-        return True
-    for row in await query_db(
-            "SELECT prospect_ids_json FROM campaigns WHERE COALESCE(instantly_campaign_id, '') != ''"):
-        try:
-            if prospect_id in json.loads(row.get("prospect_ids_json") or "[]"):
-                return True
-        except (json.JSONDecodeError, TypeError):
-            continue
-    return False
+    return bool(await query_db(
+        "SELECT 1 FROM outbox WHERE prospect_id = ? AND (status IN ('sending', 'sent') "
+        "OR (status = 'failed' AND substr(error, 1, ?) = ?)) LIMIT 1",
+        (prospect_id, len(MAYBE_SENT_PREFIX), MAYBE_SENT_PREFIX)))
 
 
 def _refuse(message: str, code: int = 409):
@@ -2444,24 +2327,6 @@ async def get_today():
                 "title": "Sending is paused",
                 "detail": str(paused) + ". Nothing will go out until you resume it.",
                 "action": "Review and resume", "tab": "outbox",
-            })
-
-        # Cold email waiting on the optional Precleared check: its free
-        # checks ran out, the key was rejected, or it couldn't be reached.
-        from sellbird.integrations.precleared import current_hold, hold_message
-        try:
-            from sellbird.config import load_config
-            loaded = load_config(str(_resolve_config_file()))
-        except Exception:
-            loaded = None  # can't judge: show the hold rather than hide it
-        precleared_hold = await current_hold(state, loaded)
-        if precleared_hold:
-            message = hold_message(precleared_hold)
-            items.append({
-                "key": "precleared-hold", "tone": message["tone"],
-                "title": message["title"], "detail": message["detail"],
-                "action": "Open the log", "tab": "controls",
-                "url": message["url"], "url_label": message["url_label"],
             })
 
         setup = await get_setup_status()

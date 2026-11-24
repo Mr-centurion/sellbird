@@ -35,12 +35,12 @@ body:
     id: provider
     attributes:
       label: Model provider
-      options: [Claude Code, Codex]
+      options: [Ollama]
   - type: dropdown
     id: mail
     attributes:
       label: Mail provider
-      options: [Gmail / Google Workspace, Microsoft 365, SMTP, Instantly]
+      options: [Drafts only]
   - type: input
     id: os
     attributes:

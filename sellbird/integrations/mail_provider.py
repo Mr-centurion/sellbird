@@ -1,19 +1,4 @@
-"""Mail provider abstraction — Sellbird owns its sending, Instantly optional.
-
-A MailProvider gives Sellbird full inbox control: send, read replies,
-thread. Two native providers ship:
-
-- ``gmail``  — a Google Workspace / Gmail mailbox via the Gmail REST API
-  (recommended: a real mailbox on a dedicated secondary domain is the
-  most deliverable way to send <50 cold emails/day).
-- ``microsoft`` — a Microsoft 365 / Outlook mailbox via Microsoft Graph
-  (OAuth; Exchange Online no longer accepts passwords over IMAP).
-- ``smtp``   — any mailbox that speaks SMTP + IMAP (AgentMail, Fastmail,
-  a Workspace app-mailbox, self-hosted). Configuration via .env.
-
-``instantly`` remains supported through the legacy Sender/Handler path —
-it isn't a MailProvider because Instantly owns sequencing/sending itself.
-"""
+"""Mail provider abstraction — outbox generates drafts only with no sending."""
 
 import logging
 import re
@@ -24,7 +9,7 @@ from typing import Protocol
 
 logger = logging.getLogger("sellbird.mail")
 
-NATIVE_PROVIDERS = ("gmail", "smtp", "microsoft")
+NATIVE_PROVIDERS = ("draft",)
 
 
 @dataclass
@@ -221,16 +206,32 @@ class MailProvider(ABC):
         """Cheap end-to-end credential check. Returns (ok, detail)."""
 
 
-def get_mail_provider(config, env) -> MailProvider | None:
-    """Build the configured native provider, or None for instantly/unknown."""
-    provider = (config.channels.email.provider or "").strip().lower()
-    if provider == "gmail":
-        from sellbird.integrations.gmail import GmailProvider
-        return GmailProvider(config, env)
-    if provider == "smtp":
-        from sellbird.integrations.smtp_mail import SmtpImapProvider
-        return SmtpImapProvider(config, env)
-    if provider == "microsoft":
-        from sellbird.integrations.microsoft import MicrosoftProvider
-        return MicrosoftProvider(config, env)
-    return None
+class DraftMailProvider(MailProvider):
+    """The default local-first provider: generates drafts only, no network sending."""
+
+    name: str = "draft"
+
+    def is_configured(self) -> bool:
+        return True
+
+    async def send_email(
+        self,
+        to_email: str,
+        subject: str,
+        body: str,
+        thread_ref: str = "",
+        in_reply_to: str = "",
+        headers: Sequence[tuple[str, str]] = (),
+    ) -> SendResult:
+        return SendResult(ok=False, error="Drafts only: network sending is disabled.")
+
+    async def get_replies(self, limit: int = 50) -> list[InboundMessage]:
+        return []
+
+    async def test_connection(self) -> tuple[bool, str]:
+        return True, "Drafts only (no network sending)"
+
+
+def get_mail_provider(config=None, env=None) -> MailProvider:
+    """Build the draft mail provider (drafts only, no sending)."""
+    return DraftMailProvider()

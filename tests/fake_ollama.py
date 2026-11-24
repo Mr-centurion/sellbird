@@ -398,7 +398,7 @@ class Harness:
         monkeypatch.setattr(sender_mod.Sender, "__init__", init_no_pacing)
 
     def set_config(self, provider="ollama", model=""):
-        if provider == "claude" or not provider:
+        if not provider:
             provider = "ollama"
         brain = {"provider": provider}
         if model:

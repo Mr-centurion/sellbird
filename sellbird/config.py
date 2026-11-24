@@ -37,7 +37,7 @@ class PersonaConfig(BaseModel):
     company: str
     role: str
     email: str
-    linkedin: str
+    linkedin: str = ""
     tone: str
 
 
@@ -90,7 +90,7 @@ class WarmupConfig(BaseModel):
     """Cold-email ramp for a new domain or mailbox.
 
     Sellbird doesn't run a warmup network itself; that needs a pool of real
-    inboxes (Instantly, Lemwarm, Mailreach...). This is the other half: no
+    inboxes (Lemwarm, Mailreach...). This is the other half: no
     cold email goes out for ``min_days`` after ``start_date``, then the cold
     cap climbs from ``start_sends`` by ``daily_increase`` a day until it
     reaches ``max_daily_sends``. Replies are never held. Empty
@@ -256,10 +256,7 @@ class SignatureConfig(BaseModel):
 
 class EmailChannelConfig(BaseModel):
     enabled: bool = True
-    # "instantly" (legacy), "gmail" (Gmail/Workspace via API — recommended),
-    # "microsoft" (Microsoft 365 / Outlook via Graph), or "smtp" (any
-    # SMTP+IMAP mailbox: AgentMail, Fastmail, ...)
-    provider: str = "instantly"
+    provider: str = "draft"
     max_daily_sends: int = 50
     # Each extra sending inbox's daily cold-email cap (sellbird inboxes),
     # under the warmup ramp from the day that inbox started warming. The
@@ -275,8 +272,7 @@ class EmailChannelConfig(BaseModel):
     # address, as before. Raising it keeps Brain calls (and sends) for the
     # prospects that match the ICP best.
     min_write_score: int = 0
-    # Native providers queue mail for approval. Instantly cannot use that
-    # outbox, so it holds campaigns and escalates replies while this is true.
+    # Native providers queue mail for approval.
     # Set false explicitly for full autopilot once you trust the output.
     require_approval: bool = True
     # Your own domains besides the sending address's and the booking link's
@@ -293,12 +289,10 @@ class EmailChannelConfig(BaseModel):
     # 3) are not prepared, so none can go out to someone who never answered;
     # a reply is still read and answered as usual. Gmail/Microsoft/SMTP only.
     follow_ups: bool = True
-    # New domain? Ramp cold email up slowly (see WarmupConfig). Native
-    # providers only: Instantly has its own warmup and per-account limits.
+    # New domain? Ramp cold email up slowly (see WarmupConfig).
     warmup: WarmupConfig = WarmupConfig()
     # Send cold email only in office hours, in each recipient's own time
-    # zone (see SendWindowConfig). None: no window, as before. Native
-    # providers only; Instantly schedules its own sends.
+    # zone (see SendWindowConfig). None: no window, as before.
     send_window: SendWindowConfig | None = None
     # A logo under every email (see SignatureConfig). Native providers only.
     signature: SignatureConfig = SignatureConfig()
@@ -342,130 +336,15 @@ def cold_daily_cap(email_config, today: _date | None = None) -> int:
 
 
 def legacy_sending_held(config) -> bool:
-    """True when Instantly is the provider and approval is required.
-
-    Instantly has no per-email approval queue, so with require_approval on
-    Sellbird holds campaign deployment and hands replies to a human.
-    """
-    email = getattr(getattr(config, "channels", None), "email", None)
-    return (getattr(email, "provider", "") == "instantly"
-            and bool(getattr(email, "require_approval", True)))
+    return False
 
 
 def sending_notice(config) -> str:
-    """A plain-language warning when outbound sending is held by config, or ""."""
-    if not legacy_sending_held(config):
-        return ""
-    return (
-        "Instantly sending is held: channels.email.require_approval is true, and "
-        "Instantly has no approval queue. Campaigns stay as drafts and replies go to "
-        "a human (dashboard Activity tab). Set require_approval: false to let Instantly "
-        "send automatically, or switch to gmail, microsoft or smtp to approve each email."
-    )
-
-
-class LinkedInChannelConfig(BaseModel):
-    enabled: bool = False
-    max_daily_connections: int = 20
-    max_daily_messages: int = 10
+    return ""
 
 
 class ChannelsConfig(BaseModel):
     email: EmailChannelConfig = EmailChannelConfig()
-    linkedin: LinkedInChannelConfig = LinkedInChannelConfig()
-
-
-PRECLEARED_ADDRESS_SOURCES = ("published", "bought", "scraped", "given", "unknown")
-# Where a sender can be based for the Precleared check: the countries whose
-# cold-email rules Precleared applies (UK, US, Canada, Germany, France,
-# Australia, Ireland, the Netherlands, Spain, Italy, Latvia, the UAE, Egypt
-# and Qatar). The check itself decides by the recipient's country; this
-# list only gates sender_country in the config and in setup.
-PRECLEARED_SENDER_COUNTRIES = (
-    "GB", "US", "CA", "DE", "FR", "AU", "IE", "NL", "ES", "IT", "LV", "AE", "EG", "QA",
-)
-# Common spellings read as their two-letter codes.
-COUNTRY_ALIASES = {"UK": "GB", "USA": "US", "UAE": "AE"}
-
-
-def normalize_prospect_country(v) -> str:
-    """A two-letter country code ("us" -> "US", "UK" -> "GB"), or "" for none.
-
-    Raises ValueError on anything else, including the booleans YAML makes of
-    an unquoted NO (Norway) or ON, so a typo is never silently ignored.
-    """
-    if isinstance(v, bool):
-        raise ValueError(
-            f"prospect_country was read as {v}. YAML turns an unquoted NO or "
-            'ON into true/false, so quote the code, e.g. prospect_country: "NO".'
-        )
-    v = str(v or "").strip().upper()
-    v = COUNTRY_ALIASES.get(v, v)
-    if v and not (len(v) == 2 and v.isascii() and v.isalpha()):
-        raise ValueError(
-            f"'{v}' is not a valid prospect_country. Use a two-letter "
-            "country code such as US or GB, or leave it empty."
-        )
-    return v
-
-
-class PreclearedConfig(BaseModel):
-    """Optional per-recipient cold-email check through Precleared.
-
-    Off by default. When on, each new recipient is checked once, before the
-    first cold email, under the cold-email rules of the recipient's country
-    (UK PECR, US CAN-SPAM, Canada's CASL, Germany's UWG, France's CPCE and
-    the other countries in PRECLEARED_SENDER_COUNTRIES). Any verdict other
-    than ok_to_email holds the email back with the reason. See
-    sellbird/integrations/precleared.py.
-    """
-
-    enabled: bool = False
-    # Where your business is based, as a two-letter code from
-    # PRECLEARED_SENDER_COUNTRIES (GB, US, CA, DE, FR, AU, IE, NL, ES, IT, LV,
-    # AE, EG or QA). Required when enabled.
-    sender_country: str = ""
-    # Where prospect addresses come from, in Precleared's terms. Sellbird
-    # builds most addresses from a learned pattern, so the honest default
-    # is "unknown"; use "published" only if yours are copied from the
-    # businesses' own websites.
-    address_source: str = "unknown"
-    # Optional: the country your prospects are in (two letters, e.g. "US"),
-    # if they are all in one. Precleared uses it only when it can't work out
-    # the recipient's country from the address, company records or the
-    # company's website. Leave empty if your prospects are spread out.
-    prospect_country: str = ""
-
-    @field_validator("sender_country", mode="before")
-    @classmethod
-    def _upper_country(cls, v) -> str:
-        v = str(v or "").strip().upper()
-        return COUNTRY_ALIASES.get(v, v)
-
-    @field_validator("address_source", mode="before")
-    @classmethod
-    def _valid_source(cls, v) -> str:
-        v = str(v or "unknown").strip().lower()
-        if v not in PRECLEARED_ADDRESS_SOURCES:
-            raise ValueError(
-                f"'{v}' is not a valid address_source. "
-                f"Use one of: {', '.join(PRECLEARED_ADDRESS_SOURCES)}."
-            )
-        return v
-
-    @field_validator("prospect_country", mode="before")
-    @classmethod
-    def _valid_prospect_country(cls, v) -> str:
-        return normalize_prospect_country(v)
-
-    @model_validator(mode="after")
-    def _country_when_enabled(self):
-        if self.enabled and self.sender_country not in PRECLEARED_SENDER_COUNTRIES:
-            raise ValueError(
-                "compliance.precleared.sender_country must be one of "
-                f"{', '.join(PRECLEARED_SENDER_COUNTRIES)} when the check is enabled."
-            )
-        return self
 
 
 DEFAULT_OPT_OUT_LINE = "Not interested? Just let me know and I won't email you again."
@@ -539,7 +418,6 @@ _HEBREW_CLICK_RE = re.compile(r"(?<!\w)ו?(?:לחצו|לחצי|לחץ\s+(?:כא�
 
 
 class ComplianceConfig(BaseModel):
-    precleared: PreclearedConfig = PreclearedConfig()
     # Added under every cold (sequence) email at send time; never to replies.
     # CAN-SPAM requires a postal address you receive mail at (a street
     # address, PO box or virtual mailbox) and a working way to opt out.
@@ -859,35 +737,7 @@ class SellbirdConfig(BaseModel):
 
 
 class EnvConfig(BaseModel):
-    instantly_api_key: str = ""
-    # Discovery providers
-    dataforseo_login: str = ""
-    dataforseo_password: str = ""
-    dataforseo_sandbox: str = ""   # any truthy value routes to the free sandbox
-    linkedin_email: str = ""
-    linkedin_password: str = ""
-    hunter_api_key: str = ""
-    serper_api_key: str = ""
-    scavio_api_key: str = ""
-    tinyfish_api_key: str = ""
-    reoon_api_key: str = ""
-    zerobounce_api_key: str = ""
-    # Native mail providers (channels.email.provider: gmail | smtp)
-    gmail_client_id: str = ""
-    gmail_client_secret: str = ""
-    smtp_host: str = ""
-    smtp_port: int = 587
-    smtp_username: str = ""
-    smtp_password: str = ""
-    imap_host: str = ""
-    imap_port: int = 993
-    imap_username: str = ""
-    imap_password: str = ""
-    # Microsoft 365 (channels.email.provider: microsoft)
-    m365_client_id: str = ""
-    m365_tenant_id: str = ""
-    # Optional: only used when compliance.precleared.enabled is true.
-    precleared_api_key: str = ""
+    pass
 
 
 def _format_validation_error(e: ValidationError) -> str:
@@ -1005,34 +855,7 @@ def load_brain_config(config_path: str | None = None) -> BrainConfig:
 def load_env() -> EnvConfig:
     """Load environment variables from .env file."""
     load_dotenv()
-    env = EnvConfig(
-        instantly_api_key=os.getenv("INSTANTLY_API_KEY", "").strip(),
-        dataforseo_login=os.getenv("DATAFORSEO_LOGIN", "").strip(),
-        dataforseo_password=os.getenv("DATAFORSEO_PASSWORD", "").strip(),
-        dataforseo_sandbox=os.getenv("DATAFORSEO_SANDBOX", "").strip(),
-        linkedin_email=os.getenv("LINKEDIN_EMAIL", "").strip(),
-        linkedin_password=os.getenv("LINKEDIN_PASSWORD", "").strip(),
-        hunter_api_key=os.getenv("HUNTER_API_KEY", "").strip(),
-        serper_api_key=os.getenv("SERPER_API_KEY", "").strip(),
-        scavio_api_key=os.getenv("SCAVIO_API_KEY", "").strip(),
-        tinyfish_api_key=os.getenv("TINYFISH_API_KEY", "").strip(),
-        reoon_api_key=os.getenv("REOON_API_KEY", "").strip(),
-        zerobounce_api_key=os.getenv("ZEROBOUNCE_API_KEY", "").strip(),
-        gmail_client_id=os.getenv("GMAIL_CLIENT_ID", "").strip(),
-        gmail_client_secret=os.getenv("GMAIL_CLIENT_SECRET", "").strip(),
-        smtp_host=os.getenv("SMTP_HOST", "").strip(),
-        smtp_port=int(os.getenv("SMTP_PORT", "587").strip() or 587),
-        smtp_username=os.getenv("SMTP_USERNAME", "").strip(),
-        smtp_password=os.getenv("SMTP_PASSWORD", "").strip(),
-        imap_host=os.getenv("IMAP_HOST", "").strip(),
-        imap_port=int(os.getenv("IMAP_PORT", "993").strip() or 993),
-        imap_username=os.getenv("IMAP_USERNAME", "").strip(),
-        imap_password=os.getenv("IMAP_PASSWORD", "").strip(),
-        m365_client_id=os.getenv("M365_CLIENT_ID", "").strip(),
-        m365_tenant_id=os.getenv("M365_TENANT_ID", "").strip(),
-        precleared_api_key=os.getenv("PRECLEARED_API_KEY", "").strip(),
-    )
-    return env
+    return EnvConfig()
 
 
 # ── Approval or autopilot ─────────────────────────────────────────────────

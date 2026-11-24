@@ -70,18 +70,15 @@ class Cfg:
     class channels:
         class email:
             enabled = True
-            provider = "smtp"
+            provider = "draft"
             max_daily_sends = 50
             send_to_risky = False
             require_approval = True
             max_bounce_rate = 0.05
 
-        class linkedin:
-            enabled = False
-
 
 class Env:
-    instantly_api_key = ""
+    pass
 
 
 def make_sender(state, provider, require_approval=True):
@@ -499,27 +496,6 @@ async def test_on_autopilot_the_first_reply_after_an_undo_still_waits(state, mon
     await make_handler(state, provider)._run_native()
     # (Their newer reply also cancels the draft still waiting, as always.)
     assert sorted(d["status"] for d in await state.get_outbox()) == ["approved", "cancelled"]
-
-
-@pytest.mark.asyncio
-async def test_on_instantly_the_first_reply_after_an_undo_goes_to_you(state, monkeypatch):
-    import sellbird.agents.handler as handler_mod
-    monkeypatch.setattr(handler_mod, "legacy_sending_held", lambda cfg: False)
-    pid = await seed_prospect(state, status="opted_out")
-    assert await state.undo_opt_out(pid) is True
-
-    handler = make_handler(state, FakeProvider())
-    handler.provider = None                      # legacy Instantly path
-    sent = []
-
-    async def send_reply(uuid, body):
-        sent.append(body)
-        return {"ok": True}
-    handler.instantly.send_reply = send_reply
-    await handler._process_reply("jane@acme.com", "Sorry, wrong button. What does it cost?", "u1")
-
-    assert sent == []
-    assert [c.prospect_id for c in await state.get_conversations_by_status("needs_human")] == [pid]
 
 
 @pytest.mark.asyncio

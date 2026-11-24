@@ -78,8 +78,6 @@ def default_home() -> Home:
     data_dir = db_path.parent
     root = Path(dash.PROJECT_ROOT) if dash is not None else paths.PROJECT_ROOT
     env_file = Path(dash.ENV_FILE) if dash is not None else root / ".env"
-    ms = sys.modules.get("sellbird.integrations.microsoft")
-    gm = sys.modules.get("sellbird.integrations.gmail")
     brain = sys.modules.get("sellbird.brain")
     return Home(
         root=root,
@@ -88,8 +86,8 @@ def default_home() -> Home:
         env_file=env_file,
         prompts_dir=Path(brain.PROMPTS_DIR) if brain is not None else root / "prompts",
         skills_dir=Path(brain.SKILLS_DIR) if brain is not None else root / "skills",
-        m365_token_file=Path(ms.TOKEN_FILE) if ms is not None else data_dir / "m365_token.json",
-        gmail_token_file=Path(gm.TOKEN_FILE) if gm is not None else data_dir / "gmail_token.json",
+        m365_token_file=data_dir / "m365_token.json",
+        gmail_token_file=data_dir / "gmail_token.json",
         dashboard_token_file=Path(dash.TOKEN_FILE) if dash is not None else data_dir / "dashboard-token",
         agent_token_file=Path(getattr(dash, "AGENT_TOKEN_FILE", data_dir / "agent-token")
                               if dash is not None else data_dir / "agent-token"),

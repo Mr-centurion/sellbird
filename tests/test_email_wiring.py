@@ -52,7 +52,7 @@ async def test_update_prospect_email(state):
 @pytest.mark.asyncio
 async def test_save_email_pattern_keeps_highest_confidence(state):
     await state.save_email_pattern("acme.com", pattern="{f}.{l}", source="default", confidence=0.3)
-    await state.save_email_pattern("acme.com", pattern="{fi}{l}", source="hunter", confidence=0.9)
+    await state.save_email_pattern("acme.com", pattern="{fi}{l}", source="domain_cache", confidence=0.9)
     cached = await state.get_email_pattern("acme.com")
     assert cached["pattern"] == "{fi}{l}"
     assert cached["confidence"] == 0.9
@@ -97,7 +97,7 @@ class _Cfg:
     class channels:
         class email:
             enabled = True
-            provider = "instantly"
+            provider = "draft"
             max_daily_sends = 50
             send_to_risky = False
 
@@ -117,7 +117,7 @@ async def test_sender_only_sends_verified(state, monkeypatch):
         ids[status] = await state.add_prospect(p)
 
     class Env:
-        instantly_api_key = "k"
+        pass
     sender = Sender(brain=None, state=state, config=_Cfg(), env=Env())
 
     # Filter logic mirrors _deploy_campaign's lead selection.
@@ -142,62 +142,10 @@ async def test_sender_only_sends_verified(state, monkeypatch):
     assert {p.email_status for p in sendable} == {"verified", "risky"}
 
 
-# ── Legacy Instantly daily cap: "today" is the local day ──
+# ── Daily cap: "today" is the local day ──
 #
 # prospects.updated_at is stored as naive UTC. Matching it against the local
 # date text shifted the day by the sender's UTC offset: sends late in the
 # local day were missed, and the previous evening's were counted as today's.
 
-# 8 hours behind UTC: local midnight on 2026-01-02 is 08:00 UTC.
-_UTC_MINUS_8 = timezone(timedelta(hours=-8))
 
-
-async def _contacted_at(state, email, utc_iso, status="contacted"):
-    pid = await state.add_prospect(Prospect(
-        first_name="Pat", last_name="Example", title="VP", email=email,
-        email_status="verified", email_verified=True, status=status,
-    ))
-    async with aiosqlite.connect(state.db_path) as db:
-        await db.execute("UPDATE prospects SET updated_at = ? WHERE id = ?", (utc_iso, pid))
-        await db.commit()
-
-
-def _sender_at(state, monkeypatch, local_now):
-    from sellbird.agents import sender as sender_mod
-    from sellbird.config import EnvConfig
-
-    monkeypatch.setattr(sender_mod, "_local_now", lambda: local_now)
-    return sender_mod.Sender(brain=None, state=state, config=_Cfg(), env=EnvConfig())
-
-
-@pytest.mark.asyncio
-async def test_a_send_late_in_the_local_day_counts_today(state, monkeypatch):
-    # 16:30 local on Jan 2 is 00:30 UTC on Jan 3: a different UTC date.
-    await _contacted_at(state, "a@acme.example", "2026-01-03T00:30:00")
-    sender = _sender_at(state, monkeypatch, datetime(2026, 1, 2, 17, 0, tzinfo=_UTC_MINUS_8))
-    assert await sender._count_sends_today() == 1
-
-
-@pytest.mark.asyncio
-async def test_last_evenings_send_does_not_count_today(state, monkeypatch):
-    # 17:00 local on Jan 1 is 01:00 UTC on Jan 2: the same UTC date as today,
-    # but before today's local midnight (08:00 UTC).
-    await _contacted_at(state, "a@acme.example", "2026-01-02T01:00:00")
-    sender = _sender_at(state, monkeypatch, datetime(2026, 1, 2, 5, 0, tzinfo=_UTC_MINUS_8))
-    assert await sender._count_sends_today() == 0
-
-
-@pytest.mark.asyncio
-async def test_only_contacted_prospects_count_toward_the_cap(state, monkeypatch):
-    await _contacted_at(state, "a@acme.example", "2026-01-02T12:00:00", status="contacted")
-    await _contacted_at(state, "b@acme.example", "2026-01-02T12:00:00", status="replied")
-    sender = _sender_at(state, monkeypatch, datetime(2026, 1, 2, 9, 0, tzinfo=_UTC_MINUS_8))
-    assert await sender._count_sends_today() == 1
-
-
-@pytest.mark.asyncio
-async def test_a_utc_sender_counts_the_utc_day(state, monkeypatch):
-    await _contacted_at(state, "a@acme.example", "2026-01-02T00:10:00")  # after midnight
-    await _contacted_at(state, "b@acme.example", "2026-01-01T23:50:00")  # before midnight
-    sender = _sender_at(state, monkeypatch, datetime(2026, 1, 2, 12, 0, tzinfo=timezone.utc))
-    assert await sender._count_sends_today() == 1

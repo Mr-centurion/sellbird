@@ -11,7 +11,6 @@ import pytest_asyncio
 from sellbird import extensions, mailboxes
 from sellbird.config import EmailChannelConfig, WarmupConfig
 from sellbird.integrations.mail_provider import InboundMessage, MailProvider, SendResult
-from sellbird.integrations.smtp_mail import SmtpImapProvider, SmtpSettings
 from sellbird.mailboxes import MAIN, ConnectRefused, MailboxStore
 from sellbird.secrets import MemorySecretBackend, SecretStore
 from sellbird.state import StateManager
@@ -151,24 +150,16 @@ class Config:
 
     class channels:
         class email:
-            provider = "smtp"
+            provider = "draft"
 
 
-@pytest.mark.asyncio
-async def test_smtp_keeps_its_password_in_the_keychain_only(store):
-    backend = MemorySecretBackend()
-    secrets = SecretStore(backend=backend, env={})
-    mid = await mailboxes.connect_smtp_mailbox(
-        store, secrets, Config, address="Two@Side.co", display_name="Ethan R",
-        warmup_started_at="", settings=SmtpSettings(host="smtp.side.co", username="two@side.co",
-                                                    password="hunter2"))
-    row = await store.get_mailbox(mid)
-    assert "hunter2" not in json.dumps(row)
-    assert backend.get_password("sellbird", f"mailbox:{mid}:smtp") == "hunter2"
-    provider = mailboxes.build_provider(row, config=Config, env=Env(), secrets=secrets)
-    assert isinstance(provider, SmtpImapProvider)
-    assert provider.smtp_pass == "hunter2" and provider.identity.address == "two@side.co"
-    assert provider.identity.display_name == "Ethan R"
+class DummySmtpSettings:
+    def __init__(self, host="h", username="u", password="p"):
+        self.host = host
+        self.username = username
+        self.password = password
+    def public(self):
+        return {"host": self.host, "username": self.username}
 
 
 @pytest.mark.asyncio
@@ -195,7 +186,7 @@ async def test_a_locked_keychain_connects_nothing(store):
         await mailboxes.connect_smtp_mailbox(
             store, SecretStore(backend=Locked(), env={}), Config, address="two@side.co",
             display_name="", warmup_started_at="",
-            settings=SmtpSettings(host="h", username="u", password="p"))
+            settings=DummySmtpSettings(host="h", username="u", password="p"))
     assert await store.list_mailboxes() == []
 
 
@@ -207,16 +198,16 @@ async def test_bad_addresses_are_refused(store, address, message):
         await mailboxes.connect_smtp_mailbox(
             store, SecretStore(backend=MemorySecretBackend(), env={}), Config, address=address,
             display_name="", warmup_started_at="",
-            settings=SmtpSettings(host="h", username="u", password="p"))
+            settings=DummySmtpSettings(host="h", username="u", password="p"))
 
 
-def test_instantly_installs_connect_no_inbox():
-    class Instantly(Config):
+def test_unsupported_provider_connect_no_inbox():
+    class Other(Config):
         class channels:
             class email:
-                provider = "instantly"
-    with pytest.raises(ConnectRefused, match="Instantly"):
-        mailboxes.check_provider_allows_inboxes(Instantly)
+                provider = "other"
+    with pytest.raises(ConnectRefused, match="other"):
+        mailboxes.check_provider_allows_inboxes(Other)
 
 
 def test_a_future_warmup_start_is_refused():

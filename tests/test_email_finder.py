@@ -16,8 +16,6 @@ from sellbird.integrations.email_finder import (
     find_email,
     generate_patterns,
     infer_pattern_from_email,
-    _status_from_verdict,
-    _translate_hunter_pattern,
 )
 
 
@@ -31,8 +29,7 @@ async def state():
 
 class Env:
     def __init__(self, **kw):
-        self.reoon_api_key = kw.get("reoon", "")
-        self.zerobounce_api_key = kw.get("zerobounce", "")
+        pass
 
 
 # ── pattern building / inference ──
@@ -60,12 +57,6 @@ def test_infer_pattern_from_email():
     assert infer_pattern_from_email("random@acme.com", "Jane", "Doe") is None
 
 
-def test_translate_hunter_pattern():
-    assert _translate_hunter_pattern("{first}.{last}") == "{f}.{l}"
-    assert _translate_hunter_pattern("{f}{last}") == "{fi}{l}"
-    assert _translate_hunter_pattern("{unknown}") is None
-
-
 # ── MX classification ──
 
 
@@ -75,18 +66,6 @@ def test_classify_mx():
     assert classify_mx("mx.pphosted.com") == "gateway"
     assert classify_mx("mail.smallco.com") == "other"
     assert classify_mx("") == "none"
-
-
-# ── verdict → status mapping ──
-
-
-def test_status_from_verdict():
-    assert _status_from_verdict({"status": "valid", "catch_all": False}) == "verified"
-    assert _status_from_verdict({"status": "deliverable"}) == "verified"
-    assert _status_from_verdict({"status": "invalid"}) == "invalid"
-    # catch_all always wins, even over a "valid" status
-    assert _status_from_verdict({"status": "valid", "catch_all": True}) == "risky"
-    assert _status_from_verdict({"status": "unknown"}) is None
 
 
 # ── pattern derivation with cache + known emails ──
@@ -115,8 +94,7 @@ async def test_derive_pattern_uses_cache(state):
 
 
 @pytest.mark.asyncio
-async def test_derive_pattern_default_no_signal(state, monkeypatch):
-    monkeypatch.setattr(ef, "_hunter_api_key", lambda: "")
+async def test_derive_pattern_default_no_signal(state):
     pattern, source, conf = await derive_pattern("unknown-co.com", state=state)
     assert pattern == "{f}.{l}"
     assert source == "default"
@@ -141,7 +119,6 @@ async def test_find_email_verify_false_is_guess(state, monkeypatch):
     async def google_mx(domain):
         return "aspmx.l.google.com"
     monkeypatch.setattr(ef, "get_mx_host", google_mx)
-    monkeypatch.setattr(ef, "_hunter_api_key", lambda: "")
 
     result = await find_email("Jane", "Doe", "acme.com", verify=False, state=state)
     assert result.status == "guess"
@@ -153,104 +130,11 @@ async def test_find_email_verify_false_is_guess(state, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_find_email_verified_via_reoon(state, monkeypatch):
-    async def google_mx(domain):
-        return "aspmx.l.google.com"
-    monkeypatch.setattr(ef, "get_mx_host", google_mx)
-    monkeypatch.setattr(ef, "_hunter_api_key", lambda: "")
-
-    async def fake_reoon(email, key):
-        return {"status": "valid", "catch_all": False}
-    monkeypatch.setattr(ef, "verify_reoon", fake_reoon)
-
-    result = await find_email(
-        "Jane", "Doe", "acme.com", env=Env(reoon="k"), state=state
-    )
-    assert result.status == "verified"
-    assert result.verified and result.sendable
-
-
-@pytest.mark.asyncio
-async def test_find_email_catch_all_is_risky(state, monkeypatch):
-    async def ms_mx(domain):
-        return "acme.mail.protection.outlook.com"
-    monkeypatch.setattr(ef, "get_mx_host", ms_mx)
-    monkeypatch.setattr(ef, "_hunter_api_key", lambda: "")
-
-    async def fake_zb(email, key):
-        return {"status": "valid", "catch_all": True}
-    monkeypatch.setattr(ef, "verify_zerobounce", fake_zb)
-
-    result = await find_email(
-        "Jane", "Doe", "acme.com", env=Env(zerobounce="k"), state=state
-    )
-    assert result.status == "risky"
-    assert not result.sendable   # verified-only by default
-    # catch-all flag persisted
-    cached = await state.get_email_pattern("acme.com")
-    assert cached["is_catch_all"] == 1
-
-
-@pytest.mark.asyncio
-async def test_find_email_invalid_from_provider(state, monkeypatch):
-    async def google_mx(domain):
-        return "aspmx.l.google.com"
-    monkeypatch.setattr(ef, "get_mx_host", google_mx)
-    monkeypatch.setattr(ef, "_hunter_api_key", lambda: "")
-
-    async def fake_reoon(email, key):
-        return {"status": "invalid", "catch_all": False}
-    monkeypatch.setattr(ef, "verify_reoon", fake_reoon)
-
-    result = await find_email(
-        "Jane", "Doe", "acme.com", env=Env(reoon="k"), state=state
-    )
-    assert result.status == "invalid"
-
-
-@pytest.mark.asyncio
 async def test_find_email_inconclusive_is_guess_not_verified(state, monkeypatch):
-    """The core bug fix: no verifier confirmation → 'guess', never 'verified'."""
+    """No verifier confirmation → 'guess', never 'verified'."""
     async def google_mx(domain):
         return "aspmx.l.google.com"
     monkeypatch.setattr(ef, "get_mx_host", google_mx)
-    monkeypatch.setattr(ef, "_hunter_api_key", lambda: "")
-    # No verifier keys configured at all → nothing can confirm.
     result = await find_email("Jane", "Doe", "acme.com", env=Env(), state=state)
     assert result.status == "guess"
     assert not result.verified
-
-
-# ── shared Hunter domain-search budget ──
-
-
-@pytest.mark.asyncio
-async def test_hunter_budget_defaults_to_free_tier(state, monkeypatch):
-    monkeypatch.delenv("HUNTER_MONTHLY_SEARCHES", raising=False)
-    assert await ef.hunter_searches_remaining(state) == 25
-    await ef.record_hunter_search(state)
-    assert await ef.hunter_searches_remaining(state) == 24
-
-
-@pytest.mark.asyncio
-async def test_hunter_budget_follows_paid_plan_setting(state, monkeypatch):
-    monkeypatch.setenv("HUNTER_MONTHLY_SEARCHES", "500")
-    assert await ef.hunter_searches_remaining(state) == 500
-
-
-@pytest.mark.asyncio
-async def test_derive_pattern_spends_and_respects_hunter_budget(state, monkeypatch):
-    monkeypatch.setattr(ef, "_hunter_api_key", lambda: "k")
-    monkeypatch.setenv("HUNTER_MONTHLY_SEARCHES", "1")
-    calls = []
-
-    async def fake_hunter(domain, key):
-        calls.append(domain)
-        return "{f}.{l}", 0.8
-
-    monkeypatch.setattr(ef, "_hunter_domain_pattern", fake_hunter)
-    _, source, _ = await derive_pattern("first-co.com", state=state)
-    assert source == "hunter_domain_search"
-    _, source, _ = await derive_pattern("second-co.com", state=state)
-    assert source == "default"
-    assert calls == ["first-co.com"]

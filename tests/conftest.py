@@ -32,7 +32,7 @@ import sellbird.humanize  # noqa: E402
 
 @pytest.fixture(autouse=True)
 def _no_installed_humanizer(monkeypatch, tmp_path):
-    """Tests never pick up the operator's real ~/.claude Humanizer skill."""
+    """Tests never pick up the operator's real Humanizer skill."""
     monkeypatch.setattr(sellbird.humanize, "SKILL_PATH", tmp_path / "no-humanizer.md")
 
 

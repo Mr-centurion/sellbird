@@ -12,8 +12,8 @@ from sellbird.brain import Brain
 from sellbird.extensions import run_tick_steps
 from sellbird.sending_mode import sync_sending_mode
 from sellbird.config import (
-    ConfigError, load_config, load_env, SellbirdConfig, legacy_sending_held, sending_notice,
-    compliance_notice, send_window_of,
+    ConfigError, load_config, load_env, SellbirdConfig,
+    send_window_of,
 )
 from sellbird.integrations.mail_provider import NATIVE_PROVIDERS
 from sellbird.pidfile import (
@@ -34,9 +34,7 @@ def quiet_http_client_logs():
     """Keep request URLs out of the terminal.
 
     httpx logs every request at INFO ("HTTP Request: GET https://...") with
-    the full query string. Reoon and ZeroBounce only accept their API key as
-    a query parameter, so at INFO `sellbird run` would print those keys in
-    clear text on every verification. Nothing in those lines is useful to a
+    the full query string. Nothing in those lines is useful to a
     user, so both client loggers sit at WARNING.
     """
     for name in ("httpx", "httpcore"):
@@ -144,9 +142,7 @@ def unusable_backlog_notice(summary: dict) -> str:
         return ""
     return (
         f"Sellbird found {recent} prospects in the last day, but none has a verified "
-        "or catch-all email, so it paused prospecting for about a day to save search "
-        "and verifier credits. Add an email verifier key (REOON_API_KEY, "
-        "ZEROBOUNCE_API_KEY or HUNTER_API_KEY in .env) or check it still has credits. "
+        "or catch-all email, so it paused prospecting for about a day. "
         "`sellbird export --all` exports the list as it is."
     )
 
@@ -179,14 +175,12 @@ async def decide_next_action(
 
     # Drafts that can't deploy must not win the cycle: choosing send_campaign
     # for them every cycle would starve the writer and scout forever. That's
-    # held Instantly drafts, any draft with the email channel off (the
+    # held drafts, any draft with the email channel off (the
     # list-building setup), and native drafts while the kill switch is set
     # (the Sender stages nothing until sending resumes).
     email = getattr(getattr(config, "channels", None), "email", None)
-    native_paused = (summary.get("sending_paused")
-                     and getattr(email, "provider", "") != "instantly")
-    held = (legacy_sending_held(config) or native_paused
-            or not getattr(email, "enabled", True))
+    native_paused = summary.get("sending_paused")
+    held = bool(native_paused or not getattr(email, "enabled", True))
     deployable = 0 if held else draft_campaigns
 
     if deployable > 0:
@@ -291,16 +285,11 @@ async def heartbeat(stop_event: asyncio.Event | None = None):
     env = load_env()
     state = StateManager()
     brain = Brain(state, config.brain)
+    model = getattr(brain, "model", "") or getattr(getattr(config, "brain", None), "model", "qwen3:1.7b")
+    ollama_url = getattr(brain, "ollama_url", "") or getattr(getattr(config, "brain", None), "ollama_url", "http://localhost:11434")
     logger.info(
-        f"Thinking with {brain.provider_label}"
-        + (f" ({brain.model})" if brain.model else "")
-        + ". Change brain.provider in sellbird.yaml to switch."
+        f"Thinking with local Ollama ({model}) at {ollama_url}. No cloud AI is used."
     )
-    for notice in (sending_notice(config), compliance_notice(config)):
-        if notice:
-            logger.warning("=" * 60)
-            logger.warning(notice)
-            logger.warning("=" * 60)
 
     await state.init_db()
     logger.info("Database initialized.")

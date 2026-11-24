@@ -48,7 +48,7 @@ def test_brain_config_validation():
     cfg = BrainConfig(provider="ollama", model="qwen3:4b", num_ctx=8192)
     assert (cfg.provider, cfg.model, cfg.num_ctx) == ("ollama", "qwen3:4b", 8192)
 
-    for bad in ({"provider": "claude"}, {"provider": "codex"}, {"provider": "openai"},
+    for bad in ({"provider": "unsupported_brain_provider"}, {"provider": "unknown_ai"},
                 {"model": "--dangerously-skip-permissions"}, {"model": "model; rm -rf /"}):
         with pytest.raises(ValidationError):
             BrainConfig(**bad)
@@ -61,7 +61,7 @@ def test_load_brain_config(tmp_path):
     assert load_brain_config(str(path)).provider == "ollama"
     path.write_text(yaml.dump({"brain": {"provider": "ollama", "model": "qwen3:4b"}}))
     assert load_brain_config(str(path)) == BrainConfig(provider="ollama", model="qwen3:4b")
-    path.write_text(yaml.dump({"brain": {"provider": "gemini"}}))
+    path.write_text(yaml.dump({"brain": {"provider": "unsupported_xyz"}}))
     with pytest.raises(ConfigError):
         load_brain_config(str(path))
 
@@ -117,3 +117,16 @@ async def test_is_within_budget(state):
         await state.increment_usage(provider="ollama")
     assert await brain.is_within_budget(4) is False
     assert await brain.is_within_budget(10) is True
+
+
+@pytest.mark.asyncio
+async def test_inference_log_records_non_empty_agent(tmp_path):
+    client = OllamaClient(db_path=tmp_path / "test.db")
+    await client.log_inference(agent="", task="", prompt_tokens=10, output_tokens=5, latency_ms=100, status="ok")
+    import aiosqlite
+    async with aiosqlite.connect(tmp_path / "test.db") as db:
+        async with db.execute("SELECT agent, task FROM inference_log") as cur:
+            row = await cur.fetchone()
+            assert row[0] == "brain"
+            assert row[1] == "chat"
+

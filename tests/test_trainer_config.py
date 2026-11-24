@@ -1,8 +1,7 @@
 """Retraining replaces what training learns and keeps every other setting.
 
-`sellbird train` used to rewrite the config from scratch, so retraining reset
-the email provider to instantly, quiet hours to New York and turned the
-Precleared check off. These tests pin down what training owns.
+`sellbird train` used to rewrite the config from scratch.
+These tests pin down what training owns.
 """
 
 import yaml
@@ -27,7 +26,7 @@ LEARNED = {
         "titles": ["Owner"], "geography": ["United States"],
     },
     "channels": {
-        "email": {"enabled": True, "provider": "instantly", "max_daily_sends": 50},
+        "email": {"enabled": True, "provider": "draft", "max_daily_sends": 50},
         "linkedin": {"enabled": True, "max_daily_connections": 20, "max_daily_messages": 10},
     },
     "usage": {
@@ -58,17 +57,13 @@ TUNED = {
             "enabled": True, "provider": "gmail", "max_daily_sends": 20,
             "require_approval": False, "send_to_risky": True, "max_bounce_rate": 0.02,
         },
-        "linkedin": {"enabled": False, "max_daily_connections": 5, "max_daily_messages": 2},
     },
     "usage": {
         "max_daily_percent": 40, "heartbeat_interval_minutes": 30,
         "quiet_hours": {"start": "20:00", "end": "08:00", "timezone": "Europe/London"},
     },
     "brain": {"provider": "ollama", "model": "qwen3:1.7b"},
-    "compliance": {"precleared": {
-        "enabled": True, "sender_country": "GB", "address_source": "published",
-        "prospect_country": "GB",
-    }},
+    "compliance": {"postal_address": "123 Main St"},
     "writer": {"humanizer": True},
 }
 
@@ -115,8 +110,8 @@ def test_brain_selection_comes_from_the_trainer(tmp_path):
 
 
 def test_first_training_keeps_the_template_settings(tmp_path):
-    # No sellbird.local.yaml yet: the settings in sellbird.yaml (gmail, the
-    # Precleared block) carry over, and the untrained placeholder persona
+    # No sellbird.local.yaml yet: the settings in sellbird.yaml
+    # carry over, and the untrained placeholder persona
     # is replaced with what training learned.
     template = tmp_path / "sellbird.yaml"
     shipped = (PROJECT_ROOT / "sellbird.yaml").read_text()
@@ -124,8 +119,7 @@ def test_first_training_keeps_the_template_settings(tmp_path):
     path = tmp_path / "sellbird.local.yaml"
     out = write_trained_config(LEARNED, path)
 
-    assert out["channels"]["email"]["provider"] == "gmail"
-    assert out["compliance"]["precleared"]["enabled"] is False
+    assert out["channels"]["email"]["provider"] == "draft"
     assert out["persona"] == LEARNED["persona"]
     assert out["product"]["offer"]["goal"] == "book_call"
     assert template.read_text() == shipped  # the template itself is untouched

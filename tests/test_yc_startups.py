@@ -115,14 +115,16 @@ def test_the_yc_preset_searches_for_companies_that_say_so():
     assert {q.location for q in build_queries(_config(), cities=["Austin, TX"], preset="yc")} == {"Austin, TX"}
 
 
-def test_the_yc_preset_needs_a_search_provider():
+def test_the_yc_preset_needs_a_search_provider(monkeypatch):
+    from sellbird.collectors.discover import DiscoveryProvider, PROVIDERS
+    class FakeSearchProvider(DiscoveryProvider):
+        key = "fake_serp"
+        kind = "serp"
+    monkeypatch.setitem(PROVIDERS, "fake_serp", FakeSearchProvider())
     assert preset_problem("yc", "osm") and "search" in preset_problem("yc", "osm")
-    assert preset_problem("yc", "dataforseo_listings")
-    assert preset_problem("yc", "serper") is None
-    assert preset_problem("yc", "tinyfish") is None
-    assert preset_problem("yc", "dataforseo_serp") is None
+    assert preset_problem("yc", "fake_serp") is None
     assert preset_problem("", "osm") is None
-    assert preset_problem("nope", "serper")
+    assert preset_problem("nope", "fake_serp")
 
 
 @pytest.mark.parametrize("domain", [
@@ -140,11 +142,17 @@ def test_cli_estimate_with_the_preset(tmp_path, monkeypatch, capsys):
     from sellbird import cli
     import sellbird.config as config_mod
     import sellbird.state as state_mod
+    from sellbird.collectors.discover import DiscoveryProvider, PROVIDERS
+    class FakeSearchProvider(DiscoveryProvider):
+        key = "fake_serp"
+        kind = "serp"
+        label = "Fake Serp"
+    monkeypatch.setitem(PROVIDERS, "fake_serp", FakeSearchProvider())
     real = state_mod.StateManager
     monkeypatch.setattr(state_mod, "StateManager", lambda *a, **k: real(str(tmp_path / "c.db")))
     monkeypatch.setattr(config_mod, "load_config", lambda *a, **k: _config())
     monkeypatch.setattr(config_mod, "load_env", lambda: SimpleNamespace(model_dump=lambda: {}))
-    args = argparse.Namespace(providers=False, provider="serper", city="", depth=30, limit=100,
+    args = argparse.Namespace(providers=False, provider="fake_serp", city="", depth=30, limit=100,
                               max_spend=1.0, estimate=True, preset="yc")
     cli.cmd_discover(args)
     out = capsys.readouterr().out
@@ -241,8 +249,13 @@ def test_the_dashboard_estimate_takes_the_preset(monkeypatch):
     import sellbird.dashboard as dash
     from tests.test_dashboard_signals import client as _client  # noqa: F401
     import sellbird.config as config_mod
+    from sellbird.collectors.discover import DiscoveryProvider, PROVIDERS
+    class FakeSearchProvider(DiscoveryProvider):
+        key = "fake_serp"
+        kind = "serp"
+    monkeypatch.setitem(PROVIDERS, "fake_serp", FakeSearchProvider())
     monkeypatch.setattr(config_mod, "load_config", lambda *a, **k: _config())
-    queries = dash._discovery_queries({"provider": "serper", "preset": "yc"}, _config())
+    queries = dash._discovery_queries({"provider": "fake_serp", "preset": "yc"}, _config())
     assert all('"backed by Y Combinator"' in q.term for q in queries)
     with pytest.raises(ValueError):
         dash._discovery_queries({"provider": "osm", "preset": "yc"}, _config())
@@ -311,7 +324,7 @@ def test_an_encoded_apostrophe_isnt_a_batch():
 
 def test_a_preset_hit_records_that_the_search_matched():
     from sellbird.collectors.discover import Business, _observations
-    biz = Business(name="Acme", domain="acme.com", source_url="https://acme.com/blog/raise", provider="serper")
+    biz = Business(name="Acme", domain="acme.com", source_url="https://acme.com/blog/raise", provider="osm")
     yc = build_queries(_config(), preset="yc")[0]
     plain = build_queries(_config())[0]
     rows = _observations(biz, "c1", {"YC_BACKED", "FOUND_IN_SERP"}, "r1", query=yc)

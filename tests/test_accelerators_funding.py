@@ -292,8 +292,6 @@ def test_the_funding_preset_searches_recent_announcements():
 @pytest.mark.parametrize("preset", ["accelerator", "funding"])
 def test_the_presets_need_a_search_provider(preset):
     assert preset_problem(preset, "osm")
-    assert preset_problem(preset, "serper") is None
-    assert preset_problem(preset, "tinyfish") is None
 
 
 @pytest.mark.parametrize("domain", [
@@ -315,7 +313,7 @@ def test_lookalikes_are_still_prospects(domain):
 
 def test_an_accelerator_preset_hit_is_evidence():
     from sellbird.collectors.discover import Business, _observations
-    biz = Business(name="Acme", domain="acme.com", source_url="https://acme.com/about", provider="serper")
+    biz = Business(name="Acme", domain="acme.com", source_url="https://acme.com/about", provider="osm")
     q = build_queries(_config(), preset="accelerator")[0]
     [hit] = [r for r in _observations(biz, "c1", {"ACCELERATOR"}, "r1", query=q)
              if r["signal_code"] == "ACCELERATOR"]
@@ -326,11 +324,16 @@ def test_an_accelerator_preset_hit_is_evidence():
                 if r["signal_code"] == "FUNDING_ROUND"]
 
 
-def test_cli_and_dashboard_take_the_presets():
+def test_cli_and_dashboard_take_the_presets(monkeypatch):
     import sellbird.dashboard as dash
     from sellbird.paths import PROJECT_ROOT
+    from sellbird.collectors.discover import DiscoveryProvider, PROVIDERS
+    class FakeSearchProvider(DiscoveryProvider):
+        key = "fake_serp"
+        kind = "serp"
+    monkeypatch.setitem(PROVIDERS, "fake_serp", FakeSearchProvider())
     for preset in ("accelerator", "funding"):
-        assert dash._discovery_queries({"provider": "serper", "preset": preset}, _config())
+        assert dash._discovery_queries({"provider": "fake_serp", "preset": preset}, _config())
     cli = (PROJECT_ROOT / "sellbird" / "cli.py").read_text(encoding="utf-8")
     choices = re.search(r'"--preset", default="", choices=\[([^\]]*)\]', cli).group(1)
     assert '"accelerator"' in choices and '"funding"' in choices
@@ -339,11 +342,10 @@ def test_cli_and_dashboard_take_the_presets():
 
 
 def test_every_preset_checks_and_builds_whether_it_has_one_term_or_several():
-    from sellbird.collectors.discover import PRESETS, preset_problem
+    from sellbird.collectors.discover import PRESETS
     config = _config()
     config.icp.hiring_signals, config.icp.titles = ["Head of Sales"], ["CEO"]
     for preset in PRESETS:
-        assert preset_problem(preset, "serper", config) is None
         queries = build_queries(config, preset=preset)
         assert queries and all("{" not in q.term for q in queries)
 

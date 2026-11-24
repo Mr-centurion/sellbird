@@ -215,7 +215,7 @@
     <div class="form-row" style="margin-bottom:4px">
       <div class="form-group">
         <label class="form-label" for="disc-preset">Look for</label>
-        <select class="form-input" id="disc-preset" title="Startup and hiring searches, run by web search (TinyFish, Serper or DataForSEO SERP). YC startups and Accelerator startups: companies whose own site says Y Combinator or another accelerator (Techstars, Antler, Entrepreneur First and others) backed them; turn on YC_BACKED or ACCELERATOR to tag them. Recently funded: companies announcing their own raise in the last 18 months; turn on FUNDING_ROUND to record the round, amount and date. Hiring for your roles: companies whose own careers pages list one of your hiring_signals roles (or ICP titles); turn on HIRING_ROLE and profiling reads the job board their site links to.">
+        <select class="form-input" id="disc-preset" title="Startup and hiring searches, run by web search. YC startups and Accelerator startups: companies whose own site says Y Combinator or another accelerator (Techstars, Antler, Entrepreneur First and others) backed them; turn on YC_BACKED or ACCELERATOR to tag them. Recently funded: companies announcing their own raise in the last 18 months; turn on FUNDING_ROUND to record the round, amount and date. Hiring for your roles: companies whose own careers pages list one of your hiring_signals roles (or ICP titles); turn on HIRING_ROLE and profiling reads the job board their site links to.">
           <option value="">Your ICP's industries</option>
           <option value="yc">YC startups</option>
           <option value="accelerator">Accelerator startups</option>
@@ -334,143 +334,12 @@
   <div class="subhead">Sending</div>
   <div id="sending-mode-card"></div>
 
-  <div class="subhead">Email provider <span class="hint">Active: <b id="active-provider">…</b> &middot; set <code>channels.email.provider</code> in <code>sellbird.yaml</code> to gmail, microsoft, smtp or instantly</span></div>
+  <div class="subhead">Email provider <span class="hint">Active: <b id="active-provider">draft</b> &middot; local drafts only</span></div>
   <div class="card">
     <div class="settings-row">
       <div>
-        <h3>Gmail / Google Workspace <span class="tag accent">Recommended</span> <span id="gmail-status" class="email-tag"></span></h3>
-        <p class="desc">Use a mailbox on a dedicated secondary domain. Create an OAuth client (type "Desktop app") in Google Cloud Console → Gmail API, paste the id and secret, save, then sign in on the Inboxes tab (or run <code>sellbird gmail auth</code>).</p>
-      </div>
-      <div class="fields">
-        <div class="form-group"><label class="form-label" for="gmail-id">Client ID</label>
-          <input type="text" class="form-input" id="gmail-id" placeholder="xxxx.apps.googleusercontent.com" autocomplete="off"></div>
-        <div class="form-group"><label class="form-label" for="gmail-secret">Client secret</label>
-          <div class="with-btn"><input type="password" class="form-input" id="gmail-secret" placeholder="Enter client secret" autocomplete="off">
-            <button class="btn btn-secondary" onclick="toggleVisibility('gmail-secret')">Show</button></div></div>
-        <button class="btn btn-primary btn-sm" onclick="saveGmail()">Save Gmail</button>
-      </div>
-    </div>
-
-    <div class="settings-row">
-      <div>
-        <h3>SMTP + IMAP mailbox</h3>
-        <p class="desc">Any real mailbox (AgentMail, Fastmail, a Workspace app password). IMAP defaults to the SMTP host and login if left blank.</p>
-      </div>
-      <div class="fields">
-        <div class="form-row">
-          <div class="form-group"><label class="form-label" for="smtp-host">SMTP host</label>
-            <input type="text" class="form-input" id="smtp-host" placeholder="smtp.example.com" autocomplete="off"></div>
-          <div class="form-group" style="max-width:120px"><label class="form-label" for="smtp-port">Port</label>
-            <input type="text" class="form-input" id="smtp-port" placeholder="587" autocomplete="off"></div>
-        </div>
-        <div class="form-group"><label class="form-label" for="smtp-user">Username</label>
-          <input type="text" class="form-input" id="smtp-user" placeholder="you@example.com" autocomplete="off"></div>
-        <div class="form-group"><label class="form-label" for="smtp-pass">Password</label>
-          <div class="with-btn"><input type="password" class="form-input" id="smtp-pass" placeholder="Enter password / app password" autocomplete="off">
-            <button class="btn btn-secondary" onclick="toggleVisibility('smtp-pass')">Show</button></div></div>
-        <details class="more-fields">
-          <summary>Reading replies from a different IMAP server or login</summary>
-          <div class="form-row">
-            <div class="form-group"><label class="form-label" for="imap-host">IMAP host</label>
-              <input type="text" class="form-input" id="imap-host" placeholder="Same as SMTP host" autocomplete="off"></div>
-            <div class="form-group" style="max-width:120px"><label class="form-label" for="imap-port">Port</label>
-              <input type="text" class="form-input" id="imap-port" placeholder="993" autocomplete="off"></div>
-          </div>
-          <div class="form-group"><label class="form-label" for="imap-user">IMAP username</label>
-            <input type="text" class="form-input" id="imap-user" placeholder="Same as SMTP username" autocomplete="off"></div>
-          <div class="form-group"><label class="form-label" for="imap-pass">IMAP password</label>
-            <div class="with-btn"><input type="password" class="form-input" id="imap-pass" placeholder="Same as SMTP password" autocomplete="off" oninput="if (this.value) document.getElementById('imap-same-pass').checked = false">
-              <button class="btn btn-secondary" onclick="toggleVisibility('imap-pass')">Show</button></div></div>
-          <label class="check-line"><input type="checkbox" id="imap-same-pass"> Use the SMTP password for IMAP</label>
-        </details>
-        <button class="btn btn-primary btn-sm" onclick="saveSmtp()">Save SMTP</button>
-      </div>
-    </div>
-
-    <div class="settings-row">
-      <div>
-        <h3>Microsoft 365 / Outlook <span id="m365-status" class="email-tag"></span></h3>
-        <p class="desc">Microsoft turned off password sign-in for IMAP, so Outlook mailboxes connect with OAuth. In <a href="https://entra.microsoft.com" target="_blank" rel="noopener noreferrer">Entra</a> → App registrations, register an app for your organization only and add the redirect URI <code>http://localhost:8766</code> as "Public client/native". Paste both IDs here, save, then sign in on the Inboxes tab (or run <code>sellbird microsoft auth</code>). No client secret is needed.</p>
-      </div>
-      <div class="fields">
-        <div class="form-group"><label class="form-label" for="m365-client">Application (client) ID</label>
-          <input type="text" class="form-input" id="m365-client" placeholder="00000000-0000-0000-0000-000000000000" autocomplete="off"></div>
-        <div class="form-group"><label class="form-label" for="m365-tenant">Directory (tenant) ID</label>
-          <input type="text" class="form-input" id="m365-tenant" placeholder="00000000-0000-0000-0000-000000000000" autocomplete="off"></div>
-        <button class="btn btn-primary btn-sm" onclick="saveMicrosoft()">Save Microsoft 365</button>
-      </div>
-    </div>
-
-    <div class="settings-row">
-      <div>
-        <h3>Instantly <span class="tag">Legacy</span></h3>
-        <p class="desc">Get your API key from <a href="https://app.instantly.ai/app/settings/integrations" target="_blank" rel="noopener">Instantly Settings → Integrations</a> (Growth plan or higher for API).</p>
-      </div>
-      <div class="fields">
-        <div class="form-group"><label class="form-label" for="instantly-key">API key</label>
-          <div class="with-btn"><input type="password" class="form-input" id="instantly-key" placeholder="Enter your Instantly API key" autocomplete="off">
-            <button class="btn btn-secondary" onclick="toggleVisibility('instantly-key')">Show</button>
-            <button class="btn btn-secondary" onclick="testInstantly()">Test</button></div>
-          <div id="instantly-test-result"></div></div>
-        <button class="btn btn-primary btn-sm" onclick="saveInstantly()">Save Instantly</button>
-      </div>
-    </div>
-  </div>
-
-  <div class="subhead">Email verification <span class="hint">Strongly recommended</span></div>
-  <div class="card">
-    <div class="settings-row">
-      <div>
-        <h3>Verifiers</h3>
-        <p class="desc">Add at least one so found emails get verified. Without any, addresses stay <span class="email-tag guess" style="margin:0">guess</span> and are never sent. Reoon has the best free tier (600 a month).</p>
-      </div>
-      <div class="fields">
-        <div class="form-group"><label class="form-label" for="reoon-key">Reoon API key <span id="reoon-status" class="email-tag"></span></label>
-          <div class="with-btn"><input type="password" class="form-input" id="reoon-key" placeholder="600 free/mo — reoon.com/email-verifier" autocomplete="off">
-            <button class="btn btn-secondary" onclick="toggleVisibility('reoon-key')">Show</button></div></div>
-        <div class="form-group"><label class="form-label" for="zerobounce-key">ZeroBounce API key <span id="zerobounce-status" class="email-tag"></span></label>
-          <input type="password" class="form-input" id="zerobounce-key" placeholder="100 free/mo — best for M365/Workspace catch-alls" autocomplete="off"></div>
-        <div class="form-group"><label class="form-label" for="hunter-key">Hunter API key <span id="hunter-status" class="email-tag"></span></label>
-          <input type="password" class="form-input" id="hunter-key" placeholder="50 free/mo + email-pattern lookup" autocomplete="off"></div>
-        <button class="btn btn-primary btn-sm" onclick="saveVerifiers()">Save verification keys</button>
-      </div>
-    </div>
-  </div>
-
-  <div class="subhead">Optional</div>
-  <div class="card">
-    <div class="settings-row">
-      <div>
-        <h3>LinkedIn</h3>
-        <p class="desc">For automated LinkedIn prospecting. Sellbird logs in and searches like a human.</p>
-      </div>
-      <div class="fields">
-        <div class="form-group">
-          <label class="form-label" for="linkedin-email">Email or username</label>
-          <input type="text" class="form-input" id="linkedin-email" placeholder="your@email.com" autocomplete="off">
-        </div>
-        <div class="form-group">
-          <label class="form-label" for="linkedin-password">Password</label>
-          <input type="password" class="form-input" id="linkedin-password" placeholder="Enter password" autocomplete="new-password">
-        </div>
-        <button class="btn btn-primary btn-sm" onclick="saveLinkedIn()">Save LinkedIn</button>
-      </div>
-    </div>
-    <div class="settings-row">
-      <div>
-        <h3>Cloudflare</h3>
-        <p class="desc">Deep website crawling with JavaScript rendering during product training. About $5 a month.</p>
-      </div>
-      <div class="fields">
-        <div class="form-group">
-          <label class="form-label" for="cf-account-id">Account ID</label>
-          <input type="text" class="form-input" id="cf-account-id" placeholder="Your Cloudflare Account ID" autocomplete="off">
-        </div>
-        <div class="form-group">
-          <label class="form-label" for="cf-api-token">API token</label>
-          <input type="password" class="form-input" id="cf-api-token" placeholder="Your Cloudflare API Token" autocomplete="off">
-        </div>
-        <button class="btn btn-primary btn-sm" onclick="saveCloudflare()">Save Cloudflare</button>
+        <h3>Local Outbox Drafts</h3>
+        <p class="desc">Sellbird operates 100% locally. The Writer drafts personalized email sequences into the Outbox where you can review, edit, or export them. No external email credentials or network sending are required.</p>
       </div>
     </div>
   </div>
@@ -495,6 +364,63 @@
     <div class="card">
       <h2>Recent logs <button class="btn btn-ghost btn-sm" onclick="loadLogs()" style="margin-left:auto"><svg class="icon" aria-hidden="true"><use href="#i-refresh"/></svg>Refresh</button></h2>
       <div class="log-viewer" id="log-viewer">No logs yet. Start Sellbird to see activity.</div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top: var(--sp-4);">
+    <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: var(--sp-3);">
+      <div>
+        <h2 style="margin-bottom: 2px;">Local inference</h2>
+        <p class="desc" style="margin: 0; font-size: var(--fs-caption); color: var(--text-3);">Proof of private, local open-weight model execution on your machine.</p>
+      </div>
+      <button class="btn btn-ghost btn-sm" onclick="loadInference()"><svg class="icon" aria-hidden="true"><use href="#i-refresh"/></svg>Refresh</button>
+    </div>
+    <div class="kpis" style="margin-bottom: var(--sp-4);">
+      <div class="card kpi">
+        <span class="kpi-label">Ollama status</span>
+        <div class="kpi-main">
+          <span class="kpi-value" id="inference-status" style="font-size: 1.25rem;">Checking…</span>
+        </div>
+        <span class="kpi-note" id="inference-host">localhost</span>
+      </div>
+      <div class="card kpi">
+        <span class="kpi-label">Model</span>
+        <div class="kpi-main">
+          <span class="kpi-value" id="inference-model" style="font-size: 1.25rem;">—</span>
+        </div>
+        <span class="kpi-note">Local open-weight LLM</span>
+      </div>
+      <div class="card kpi">
+        <span class="kpi-label">Total inference calls</span>
+        <div class="kpi-main">
+          <span class="kpi-value" id="inference-total">0</span>
+        </div>
+        <span class="kpi-note">Recorded in inference_log</span>
+      </div>
+      <div class="card kpi">
+        <span class="kpi-label">Cloud AI used</span>
+        <div class="kpi-main">
+          <span class="kpi-value" style="color: var(--good); font-size: 1.25rem;">0% (None)</span>
+        </div>
+        <span class="kpi-note">100% offline &amp; private</span>
+      </div>
+    </div>
+    <div class="table-card">
+      <table class="table nowrap" id="inference-table">
+        <thead>
+          <tr>
+            <th>Time</th>
+            <th>Agent</th>
+            <th>Task</th>
+            <th>Model</th>
+            <th>Host</th>
+            <th>Latency</th>
+          </tr>
+        </thead>
+        <tbody id="inference-tbody">
+          <tr><td colspan="6" style="text-align: center; color: var(--text-3); padding: var(--sp-4);">Loading inference history…</td></tr>
+        </tbody>
+      </table>
     </div>
   </div>
 </div>
@@ -540,51 +466,11 @@
   </div>
 
   <div class="help-section">
-    <h2>Getting your API keys</h2>
-
-    <details>
-      <summary>Instantly API key (legacy)</summary>
-      <div class="faq-body">
-        <p>Instantly is the legacy sending option; Gmail or SMTP is recommended.</p>
-        <p>1. Sign up at <a href="https://instantly.ai" target="_blank" rel="noopener">instantly.ai</a> (you need the Growth plan for API access)</p>
-        <p>2. Go to Settings &gt; Integrations</p>
-        <p>3. Copy your API key</p>
-        <p>4. Paste it in the Settings tab here</p>
-      </div>
-    </details>
-
-    <details>
-      <summary>LinkedIn credentials (optional)</summary>
-      <div class="faq-body">
-        <p>If you want Sellbird to find prospects on LinkedIn, enter your LinkedIn email and password. Sellbird uses a real browser to search LinkedIn like a human would, with random delays and rate limits to avoid detection.</p>
-        <p>If you skip this, Sellbird will find prospects through Google searches and company website scraping instead.</p>
-      </div>
-    </details>
-
-    <details>
-      <summary>Cloudflare Browser Rendering (optional)</summary>
-      <div class="faq-body">
-        <p>This is only used during product training (when Sellbird crawls your website to learn about your product). It handles JavaScript-heavy websites that a basic crawler can't read.</p>
-        <p>1. Sign up at <a href="https://dash.cloudflare.com" target="_blank" rel="noopener">Cloudflare</a> (paid Workers plan, ~$5/month)</p>
-        <p>2. Go to Workers &amp; Pages &gt; Browser Rendering</p>
-        <p>3. Create an API token with Browser Rendering Edit permissions</p>
-        <p>4. Enter your Account ID and API Token in the Settings tab</p>
-        <p>Without this, Sellbird uses a built-in crawler that works fine for most websites but can't render JavaScript.</p>
-      </div>
-    </details>
-  </div>
-
-  <div class="help-section">
     <h2>Common issues</h2>
 
     <details>
       <summary>"command not found: sellbird"</summary>
       <div class="faq-body">You need to activate the virtual environment first: <code>source .venv/bin/activate</code></div>
-    </details>
-
-    <details>
-      <summary>Instantly API returns 401</summary>
-      <div class="faq-body">Your API key is wrong, or you need the Growth plan (the free plan doesn't include API access). Double-check the key in Settings &gt; Integrations in your Instantly dashboard.</div>
     </details>
 
     <details>

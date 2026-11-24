@@ -93,8 +93,8 @@ Most companies list leadership on /team, /about, /about-us, /our-team, /people, 
 
 ### Verification Methods (Free)
 1. **MX Record Check**: Verify the domain accepts email (dns lookup)
-2. **SMTP RCPT TO**: Ask the mail server if the address exists
-3. **Hunter.io Free Tier**: 25 searches/mo + 50 verifications/mo
+2. **DNS verification**: Verify mail server reachability
+3. **Pattern Matching**: Generate candidate patterns from scraped addresses
 4. **Email format from known addresses**: If you know one person's email at a company, the pattern applies to everyone
 
 ### Catch-All Domains

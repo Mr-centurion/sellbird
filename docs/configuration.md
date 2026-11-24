@@ -13,11 +13,11 @@ persona:      { name, company, role, email, tone }
 product:      { name, description, pricing, key_benefits, objection_responses, offer }
 icp:          { industries, titles, company_size, geography, hiring_signals, geo_coordinates }
 channels:
-  email:      { provider: gmail | microsoft | smtp | instantly, max_daily_sends, per_inbox_daily_cap,
+  email:      { provider: draft, max_daily_sends, per_inbox_daily_cap,
                 require_approval, send_to_risky, min_write_score, max_bounce_rate, follow_ups, warmup, send_window, signature }
-usage:        { max_daily_claude_percent, heartbeat_interval_minutes, quiet_hours }
-brain:        { provider: claude | codex, model, reasoning_effort }   # optional; claude by default
-writer:       { humanizer, site_facts, require_tip }   # optional; humanizer true adds one editing pass per batch using ~/.claude/skills/humanizer/SKILL.md
+usage:        { max_daily_percent, heartbeat_interval_minutes, quiet_hours }
+brain:        { provider: ollama, model, ollama_url, num_ctx }   # offline-first local inference
+writer:       { humanizer, site_facts, require_tip }
               # site_facts (default true): the Writer sees what the free homepage signals found (no structured data,
               # a stale or very small site, AI crawlers blocked) so an email can name one concrete thing to change.
               # They come from an automated read of one page and can be wrong, so check a draft's claim
@@ -31,11 +31,11 @@ writer:       { humanizer, site_facts, require_tip }   # optional; humanizer tru
 
 `min_write_score` (0-100, default 0) is the lowest Scout fit score the writer
 drafts for: a prospect below it keeps its deliverable address but gets no
-sequence, so Claude calls and sends go to the best matches first.
+sequence, so model calls and drafts go to the best matches first.
 
-`follow_ups` (default true) set to `false` makes a campaign stage only its first email on Gmail, Microsoft and SMTP. Steps 2 and 3 are never prepared, so none can go out to someone who has not answered. A reply is still read, and the answer waits in the Outbox for you as usual. The Writer still drafts the whole sequence; the Sender just doesn't stage the later steps.
+`follow_ups` (default true) set to `false` makes a campaign stage only its first email. Steps 2 and 3 are never prepared, so none can go out to someone who has not answered. A reply is still read, and the answer waits in the Outbox for you as usual. The Writer still drafts the whole sequence; the Sender just doesn't stage the later steps.
 
-`max_daily_claude_percent` caps whichever subscription `brain.provider` uses (the name predates Codex support).
+`max_daily_percent` caps daily model calls.
 
 If `sellbird.local.yaml` exists it wins. It's gitignored, so a fork can carry real product configuration while the tracked `sellbird.yaml` stays a template — nobody publishes their positioning and pricing by accident.
 
@@ -47,24 +47,19 @@ sellbird dashboard             # web UI at 127.0.0.1:5555 (--url: print the unlo
 sellbird signals               # review/confirm what to prospect against
 sellbird discover              # find businesses; --providers / --estimate
 sellbird profile               # read discovered companies' sites (free)
-sellbird train <url>           # learn a product from its website (--provider codex --model gpt-5.5)
+sellbird train <url>           # learn a product from its website
 sellbird status                # pipeline summary
 sellbird usage                 # active provider's quota + per-agent tokens
 sellbird outbox                # review queued email
 sellbird export                # deliverable prospects → CSV
-sellbird precleared-key        # free key for the cold-email check, saved to .env
 sellbird companies             # company register → CSV: every company, fit, and why it wasn't contacted
 sellbird sending pause|resume  # kill switch
 sellbird suppressions [add|remove <value>]  # addresses and domains never emailed
 sellbird inboxes list|connect|test|pause|resume|cap|name|remove|use  # several sending inboxes
 sellbird tray                  # menu-bar (macOS) / tray (Windows) icon; --status prints the state
 sellbird autostart install|uninstall|status  # start the tray at login
-sellbird mcp install [claude|codex]  # let your coding agent read Sellbird and pause sending
 sellbird warmup [domain]       # is the sending domain ready? (SPF/DKIM/DMARC, age, blocklists, warmup)
-sellbird trulyinbox connect    # connect TrulyInbox so Sellbird reads the mailbox's warmup
 sellbird retry-writes          # retry prospects the Writer gave up on
-sellbird gmail auth            # one-time Gmail OAuth
-sellbird microsoft auth|test  # one-time Microsoft 365 sign-in (docs/microsoft365.md)
 ```
 
 Prospect CSV exports exclude opted-out contacts, including when using
@@ -137,11 +132,7 @@ as services instead.
 
 ## Your coding agent (MCP)
 
-`sellbird mcp install` adds Sellbird to Claude Code (`sellbird mcp install codex`
-for Codex). It shows the exact change to your agent's config first and applies it
-only on a yes, touches only its own entry, and refuses if a Sellbird entry it
-didn't write is already there. `--print` shows the entry to add by hand to any
-other MCP client; `sellbird mcp uninstall` takes it out again.
+`sellbird mcp` starts the MCP server for connecting agents.
 
 Your agent then talks to the running dashboard (`sellbird dashboard`) with its
 own token, `data/agent-token`, never yours. With it the agent can read
