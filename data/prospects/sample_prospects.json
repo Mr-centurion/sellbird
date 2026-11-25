@@ -1,0 +1,227 @@
+[
+  {
+    "sample_data": "SAMPLE DATA",
+    "company": "Apex Logistics",
+    "industry": "Supply Chain & Logistics",
+    "size": "250-500",
+    "contact_name": "Marcus Vance",
+    "contact_title": "VP of Supply Chain Operations",
+    "contact_email": "marcus.vance@apexlogistics.demo",
+    "website_description": "SAMPLE DATA: Apex Logistics provides enterprise-grade third-party logistics, cold-chain freight management, and automated fulfillment operations for modern distributors across North America. Our centralized platform unifies carrier dispatching, inventory routing, and customs compliance into a single dashboard. We help high-volume shippers reduce shipping transit delays, lower freight spend, and maintain full end-to-end visibility across multi-node warehouse networks with guaranteed SLA delivery schedules.",
+    "recent_news": [
+      "2026-08-14: Apex Logistics announces the opening of two new fulfillment hubs in Chicago and Dallas to support 35% freight volume growth.",
+      "2026-10-02: Former DHL executive Marcus Vance joins Apex Logistics as Vice President of Supply Chain Operations to lead modernization.",
+      "2026-11-05: Apex Logistics reports supply chain bottlenecks and rising fuel costs due to legacy ERP dispatching bottlenecks."
+    ]
+  },
+  {
+    "sample_data": "SAMPLE DATA",
+    "company": "CloudMetrics AI",
+    "industry": "DevOps & Cloud SaaS",
+    "size": "50-200",
+    "contact_name": "Elena Rostova",
+    "contact_title": "Chief Technology Officer",
+    "contact_email": "elena.rostova@cloudmetrics.demo",
+    "website_description": "SAMPLE DATA: CloudMetrics AI delivers real-time observability, automated root-cause diagnosis, and autonomous cloud infrastructure telemetry for Kubernetes engineering teams. Designed to eliminate production downtime, our platform correlates distributed metrics, traces, and application logs into actionable alerts. Engineering departments leverage CloudMetrics AI to accelerate mean-time-to-resolution, prevent cascading microservice outages, optimize cloud server spend, and streamline continuous deployment across multi-cloud enterprise production clusters.",
+    "recent_news": [
+      "2026-07-22: CloudMetrics AI secures M Series B round led by Horizon Ventures to accelerate infrastructure monitoring R&D.",
+      "2026-09-18: CloudMetrics AI opens 45 new engineering and customer success roles following triple-digit enterprise customer expansion.",
+      "2026-10-30: CTO Elena Rostova reports engineering team fatigue from alert noise and incident escalation in legacy Datadog dashboards."
+    ]
+  },
+  {
+    "sample_data": "SAMPLE DATA",
+    "company": "MedPulse Health",
+    "industry": "Healthcare IT",
+    "size": "500-1000",
+    "contact_name": "Dr. Aris Thorne",
+    "contact_title": "Chief Information Officer",
+    "contact_email": "aris.thorne@medpulse.demo",
+    "website_description": "SAMPLE DATA: MedPulse Health develops next-generation patient intake, clinical scheduling, and EHR communication systems for regional hospital networks and specialty outpatient clinics. Our HIPAA-compliant platform automates referral triage, digital check-in workflows, and insurance eligibility checks. By streamlining administrative friction, MedPulse Health enables physicians and medical staff to focus on patient outcomes while reducing administrative overhead and patient wait times across modern healthcare systems.",
+    "recent_news": [
+      "2026-08-01: MedPulse Health expands clinical operations into eight regional outpatient care centers across the Midwest.",
+      "2026-09-14: MedPulse Health begins migration away from Epic legacy scheduling modules to deploy modern clinical workflow intelligence.",
+      "2026-11-10: Hospital staff survey reveals administrative burnout from repetitive manual charting and patient appointment scheduling backlogs."
+    ]
+  },
+  {
+    "sample_data": "SAMPLE DATA",
+    "company": "FinShield Security",
+    "industry": "Fintech & Cybersecurity",
+    "size": "100-250",
+    "contact_name": "Kavita Rao",
+    "contact_title": "Head of Information Security",
+    "contact_email": "kavita.rao@finshield.demo",
+    "website_description": "SAMPLE DATA: FinShield Security delivers continuous identity verification, automated transaction anomaly detection, and fraud defense infrastructure for digital banks and payment service providers. Our machine-learning engines analyze billions of behavioral signals in real time to prevent credential stuffing and synthetic identity fraud. FinShield empowers financial institutions to meet strict regulatory compliance standards while preserving a seamless, frictionless onboarding experience for legitimate consumer banking customers.",
+    "recent_news": [
+      "2026-06-19: FinShield Security closes M Series A funding to expand enterprise risk intelligence and fraud prevention teams.",
+      "2026-08-25: FinShield Security deploys Snowflake and Kubernetes to overhaul automated real-time transaction fraud detection pipelines.",
+      "2026-10-12: Head of InfoSec Kavita Rao highlights increasing compliance auditing pressure ahead of upcoming global banking privacy mandates."
+    ]
+  },
+  {
+    "sample_data": "SAMPLE DATA",
+    "company": "GreenVolt Energy",
+    "industry": "Clean Energy & Utilities",
+    "size": "200-500",
+    "contact_name": "Julian Ortiz",
+    "contact_title": "Director of Asset Operations",
+    "contact_email": "julian.ortiz@greenvolt.demo",
+    "website_description": "SAMPLE DATA: GreenVolt Energy develops, operates, and optimizes utility-scale solar installations and commercial battery energy storage facilities across Western regions. Our intelligent energy management software synchronizes distributed grid transmission, predictive inverter maintenance, and wholesale electricity trading. We assist commercial enterprises and municipal utilities in accelerating renewable energy transitions while maximizing power generation efficiency and maintaining reliable grid resilience against extreme climate disturbances.",
+    "recent_news": [
+      "2026-05-30: GreenVolt Energy announces commercial commission of a 150MW battery storage installation in central Nevada.",
+      "2026-08-11: Former NextEra executive Julian Ortiz appointed as Director of Asset Operations to oversee renewable fleet performance.",
+      "2026-10-22: GreenVolt Energy reports mounting operational maintenance delays caused by distributed hardware telemetry disconnected from central databases."
+    ]
+  },
+  {
+    "sample_data": "SAMPLE DATA",
+    "company": "RetainAI",
+    "industry": "E-Commerce & Marketing Tech",
+    "size": "50-100",
+    "contact_name": "Chloe Bennett",
+    "contact_title": "VP of Growth & Marketing",
+    "contact_email": "chloe.bennett@retainai.demo",
+    "website_description": "SAMPLE DATA: RetainAI provides omni-channel customer lifecycle marketing automation, predictive churn scoring, and personalized campaign orchestration for direct-to-consumer digital commerce brands. Our platform synthesizes customer browsing intent, purchasing recency, and support tickets to deliver hyper-targeted SMS and email retention messaging. High-growth retail merchants rely on RetainAI to maximize customer lifetime value, re-engage dormant shoppers, and drive sustained repeat transaction revenues.",
+    "recent_news": [
+      "2026-07-09: RetainAI raises M seed extension to accelerate AI-driven personalization algorithms and merchant analytics modules.",
+      "2026-09-03: RetainAI hires 25 account executives and customer success specialists across Austin and New York offices.",
+      "2026-11-01: VP of Growth Chloe Bennett notes surging customer acquisition costs forcing immediate shift toward retention marketing investments."
+    ]
+  },
+  {
+    "sample_data": "SAMPLE DATA",
+    "company": "Nexus BioTech",
+    "industry": "Biotechnology & Life Sciences",
+    "size": "100-250",
+    "contact_name": "Dr. Henrik Lindqvist",
+    "contact_title": "Head of Research Computing",
+    "contact_email": "henrik.lindqvist@nexusbio.demo",
+    "website_description": "SAMPLE DATA: Nexus BioTech accelerates computational drug discovery and antibody design through proprietary high-throughput molecular screening pipelines and structural modeling software. We collaborate with pharmaceutical institutions and clinical research organizations to identify targeted oncology candidates. Our secure laboratory data infrastructure standardizes complex genomic assay findings, accelerates preclinical trial evaluation milestones, and protects intellectual property assets with stringent scientific data governance.",
+    "recent_news": [
+      "2026-06-15: Nexus BioTech enters research collaboration agreement with major European oncology pharmaceutical manufacturer.",
+      "2026-09-20: Nexus BioTech upgrades high-performance computing clusters with GPU acceleration for molecular structural dynamics simulations.",
+      "2026-10-18: Dr. Henrik Lindqvist voices frustration over fragmented laboratory research data silos delaying investigational new drug filings."
+    ]
+  },
+  {
+    "sample_data": "SAMPLE DATA",
+    "company": "BuildMatrix",
+    "industry": "Construction Tech",
+    "size": "150-300",
+    "contact_name": "Frank Morales",
+    "contact_title": "VP of Field Operations",
+    "contact_email": "frank.morales@buildmatrix.demo",
+    "website_description": "SAMPLE DATA: BuildMatrix develops collaborative job-site project management, subcontractor scheduling, and building information modeling software for commercial general contractors. Our mobile-first platform bridges job-site superintendents with central office cost accounting teams in real time. Construction firms utilize BuildMatrix to prevent costly rework, coordinate field materials delivery, track daily site safety inspections, and maintain rigorous budget control on complex commercial development projects.",
+    "recent_news": [
+      "2026-08-05: BuildMatrix completes acquisition of Trimble-compatible surveying and spatial layout software provider SiteSync.",
+      "2026-09-17: BuildMatrix launches regional expansion initiative establishing new customer training branches in Atlanta and Phoenix.",
+      "2026-11-12: Field teams express dissatisfaction with Procore software licensing costs and complicated mobile data entry interfaces."
+    ]
+  },
+  {
+    "sample_data": "SAMPLE DATA",
+    "company": "TalentFlow",
+    "industry": "HR & Workforce Management",
+    "size": "75-150",
+    "contact_name": "Maya Patel",
+    "contact_title": "Chief People Officer",
+    "contact_email": "maya.patel@talentflow.demo",
+    "website_description": "SAMPLE DATA: TalentFlow builds automated candidate sourcing, structured skills evaluation, and collaborative interview scheduling software for distributed remote companies. Our system integrates directly with leading job boards and internal human resource information systems to eliminate recruitment bottleneck cycles. TalentFlow helps talent acquisition teams discover top engineering candidates faster, eliminate interview evaluation bias, and improve candidate offer acceptance ratios worldwide.",
+    "recent_news": [
+      "2026-07-14: TalentFlow closes M Series A funding led by FirstMark Capital to scale global recruiter operations.",
+      "2026-08-28: Veteran enterprise HR leader Maya Patel joins TalentFlow as Chief People Officer to guide enterprise expansion.",
+      "2026-10-25: TalentFlow leadership notes high recruiting coordination drop-off rates due to unautomated candidate email follow-up workflows."
+    ]
+  },
+  {
+    "sample_data": "SAMPLE DATA",
+    "company": "DataForge Analytics",
+    "industry": "Data Infrastructure",
+    "size": "50-150",
+    "contact_name": "Nathaniel Drake",
+    "contact_title": "Head of Data Engineering",
+    "contact_email": "nathaniel.drake@dataforge.demo",
+    "website_description": "SAMPLE DATA: DataForge Analytics delivers automated data pipeline transformation, warehouse semantic modeling, and data quality testing software for business intelligence teams. Our zero-maintenance SQL orchestration engine converts unstructured operational event logs into clean, analytics-ready star schemas. Companies depend on DataForge Analytics to eliminate manual ETL script maintenance, guarantee data warehouse accuracy, and empower analysts to generate executive dashboards within minutes.",
+    "recent_news": [
+      "2026-06-25: DataForge Analytics launches automated dbt migration tool facilitating enterprise cloud warehouse modernization programs.",
+      "2026-09-11: DataForge Analytics expands engineering headcount by 40% to build enterprise governance and lineage connectors.",
+      "2026-10-29: Nathaniel Drake points to broken upstream API schema modifications causing frequent downstream executive reporting inaccuracies."
+    ]
+  },
+  {
+    "sample_data": "SAMPLE DATA",
+    "company": "SecurePay Solutions",
+    "industry": "Financial Services & Payments",
+    "size": "300-600",
+    "contact_name": "Tariq Mansoor",
+    "contact_title": "Head of Payment Infrastructure",
+    "contact_email": "tariq.mansoor@securepay.demo",
+    "website_description": "SAMPLE DATA: SecurePay Solutions delivers unified cross-border payment gateway infrastructure, multi-currency settlement clearing, and automated merchant chargeback management for international online retailers. Our payment processing engine ensures high transaction authorization success rates while protecting merchant accounts from fraudulent charge reversals. SecurePay Solutions enables modern global businesses to expand into emerging regional markets with localized payment acceptance and complete regulatory reporting.",
+    "recent_news": [
+      "2026-08-20: SecurePay Solutions expands banking integration partnerships into five Southeast Asian emerging commercial markets.",
+      "2026-09-30: SecurePay Solutions implements Apache Kafka streaming architecture to handle spike payment volumes during seasonal promotions.",
+      "2026-11-08: Merchant advisory board flags rising payment processing dispute costs and delays in resolving cross-border bank reconciliation errors."
+    ]
+  },
+  {
+    "sample_data": "SAMPLE DATA",
+    "company": "SmartWare Robotics",
+    "industry": "Industrial Automation",
+    "size": "200-400",
+    "contact_name": "Ingrid Bergman",
+    "contact_title": "Director of Manufacturing Systems",
+    "contact_email": "ingrid.bergman@smartware.demo",
+    "website_description": "SAMPLE DATA: SmartWare Robotics designs autonomous mobile transport robots and computer-vision inventory palletizing machinery for high-throughput manufacturing plants and third-party logistics warehouses. Our collaborative warehouse robotics fleet seamlessly navigates factory floors alongside human logistics workers. SmartWare Robotics enables industrial operators to boost fulfillment throughput, reduce material handling workplace injuries, and maintain uninterrupted round-the-clock assembly operations.",
+    "recent_news": [
+      "2026-07-18: SmartWare Robotics secures M Series C investment round to scale autonomous assembly robot manufacturing facilities.",
+      "2026-09-08: Ingrid Bergman appointed Director of Manufacturing Systems to oversee automated machinery integration for automotive suppliers.",
+      "2026-10-15: Factory operations team reports scheduling delays caused by proprietary robot control software that lacks open API integrations."
+    ]
+  },
+  {
+    "sample_data": "SAMPLE DATA",
+    "company": "OmniRetail Systems",
+    "industry": "Retail Technology",
+    "size": "150-300",
+    "contact_name": "Darren Cole",
+    "contact_title": "VP of Store Operations",
+    "contact_email": "darren.cole@omniretail.demo",
+    "website_description": "SAMPLE DATA: OmniRetail Systems builds cloud point-of-sale software, unified perpetual store inventory tracking, and clienteling applications for multi-location lifestyle retail brands. Our omnichannel platform syncs brick-and-mortar storefront registers with online e-commerce inventories instantly. Specialty retailers rely on OmniRetail Systems to enable flexible click-and-collect fulfillment, prevent out-of-stock lost sales, and deliver personalized in-store VIP customer service experiences across all retail locations.",
+    "recent_news": [
+      "2026-08-12: OmniRetail Systems signs multi-year software deployment contract with leading national apparel specialty store chain.",
+      "2026-09-27: OmniRetail Systems announces enterprise migration away from legacy Lightspeed systems to unified cloud commerce.",
+      "2026-11-03: VP Darren Cole highlights store manager frustration regarding barcode scanning latency and disconnected physical inventory counts."
+    ]
+  },
+  {
+    "sample_data": "SAMPLE DATA",
+    "company": "AeroDynamics Defense",
+    "industry": "Aerospace & Engineering",
+    "size": "500-1200",
+    "contact_name": "Col. Robert Sterling",
+    "contact_title": "Director of Avionics Procurement",
+    "contact_email": "robert.sterling@aerodynamics.demo",
+    "website_description": "SAMPLE DATA: AeroDynamics Defense manufactures precision avionics sensors, telemetry communication modules, and ruggedized flight control computers for commercial aerospace manufacturers and defense systems integrators. Engineered to operate under extreme environmental stress, our embedded flight hardware meets stringent FAA and military certification standards. AeroDynamics Defense partners with aerospace innovators to guarantee mission-critical flight stability, secure military datalinks, and superior navigation accuracy.",
+    "recent_news": [
+      "2026-05-19: AeroDynamics Defense awarded M prime contractor development award for unmanned avionics guidance systems.",
+      "2026-08-31: Former Air Force procurement officer Col. Robert Sterling appointed Director of Avionics Procurement.",
+      "2026-10-19: Engineering leadership cites critical supply lead-time delays in acquiring specialized aerospace-grade microcontrollers and FPGA components."
+    ]
+  },
+  {
+    "sample_data": "SAMPLE DATA",
+    "company": "EcoClean Services",
+    "industry": "Facilities & Commercial Cleaning",
+    "size": "250-600",
+    "contact_name": "Valerie Nguyen",
+    "contact_title": "VP of Commercial Services",
+    "contact_email": "valerie.nguyen@ecoclean.demo",
+    "website_description": "SAMPLE DATA: EcoClean Services delivers certified sustainable commercial facility janitorial management, green sanitation audits, and indoor air quality monitoring for corporate office campuses and healthcare complexes. Our specialized cleaning teams utilize non-toxic biodegradable sanitation chemistry and automated chemical dilution dispensers. EcoClean Services helps corporate property managers achieve LEED green building certifications while safeguarding employee workplace health and wellness.",
+    "recent_news": [
+      "2026-07-05: EcoClean Services expands commercial cleaning operations into metropolitan Seattle, Portland, and Vancouver office parks.",
+      "2026-09-15: EcoClean Services adds 60 trained environmental safety specialists to support corporate regional campus contracts.",
+      "2026-11-14: Operations leadership reports client complaints over subcontractor scheduling inconsistencies and delayed custodial inspection reporting."
+    ]
+  }
+]

@@ -1,0 +1,11 @@
+SAMPLE DATA: About Acme Technologies Inc.
+
+Acme Technologies is a B2B SaaS software provider founded in 2022 and headquartered in Austin, Texas. We build intelligent workflow automation and engineering intelligence software tailored for fast-growing mid-market technology and logistics enterprises. Our mission is to eliminate manual operational bottlenecks and empower engineering leaders with clear visibility into delivery metrics.
+
+Company Overview:
+- Headquarters: Austin, TX
+- Founded: 2022
+- Team Size: 45 employees
+- Customers: Over 250 technology and operations teams globally
+- Key Differentiators: Turnkey integrations, privacy-first on-premises or cloud deployments, and zero complex scripting required.
+- Contact: info@acmetech.example.com | https://acmetech.example.com

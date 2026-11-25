@@ -1630,7 +1630,17 @@ async function loadOutbox() {
     return h + '</tbody></table></div>';
   };
 
+  const draftsTable = table('Drafts (Validated)', data.drafts, [
+    ['Company', r => r.company || r.product_id || 'Prospect'],
+    ['Contact', r => (r.contact_name ? r.contact_name + (r.title ? ' (' + r.title + ')' : '') : (r.contact_email || '—'))],
+    ['Subject', r => r.subject],
+    ['Model', r => r.model ? '<code>' + escHtml(r.model) + '</code>' : '<code>local</code>', false, true],
+    ['Status', r => badge(r.status || 'draft'), false, true],
+    ['Created', r => formatDate(r.created_at), true],
+  ]);
+
   list.innerHTML =
+    draftsTable +
     table('Approved &amp; scheduled', data.approved, [
       ['To', r => r.to_email], ['Step', r => r.step], ['Subject', r => r.subject],
       ['Sends', r => r.status === 'sending' ? badge(r.status) : escHtml(formatDate(r.send_at)), true, true],
@@ -2124,8 +2134,9 @@ async function loadProspects() {
   if (!data) { el.innerHTML = offlineState(); return; }
   _prospects = data;
   if (!data.length) {
-    el.innerHTML = emptyState(icon('contacts'), 'No contacts yet',
-      'Sellbird hasn\'t found any prospects. Once it\'s running, the Scout agent searches the web for people matching your ideal customer profile in <b>sellbird.yaml</b>.');
+    el.innerHTML = emptyState(icon('contacts'), 'No prospects yet',
+      'Sellbird hasn\'t found any prospects yet.<br><br>' +
+      '<button class="btn btn-primary" onclick="importSampleProspects(this)">' + icon('download') + 'Import sample prospects</button>');
     return;
   }
   if (!document.getElementById('contact-rows')) {
@@ -2188,9 +2199,12 @@ function renderContacts() {
         ? '<button class="btn btn-ghost btn-sm" onclick="toggleOptOut(' + i + ')" ' +
           'aria-expanded="' + (_optOut.id === p.id) + '" title="What made Sellbird stop emailing them">' +
           (p.status === 'opted_out' ? 'Why?' : 'Opt-out history') + '</button>' : '') +
+        '<button class="btn btn-ghost btn-sm" onclick="toggleProspectIntel(' + i + ')" ' +
+        'title="View stored research, signals with evidence, and problem statements">' + (p._intelOpen ? 'Hide Intel' : 'Intelligence') + '</button>' +
         '<button class="btn btn-ghost btn-sm row-action" onclick="fbProspect(' + i + ')" ' +
         'title="Leave feedback on this contact">Feedback</button></div></td></tr>';
     if (_optOut.id === p.id) html += '<tr class="detail-row"><td colspan="8">' + optOutPanel(p) + '</td></tr>';
+    if (p._intelOpen) html += '<tr class="detail-row"><td colspan="8">' + prospectIntelPanel(p, i) + '</td></tr>';
   }
   rowsEl.innerHTML = html + '</tbody></table></div>' +
     '<div class="table-foot">' + rows.length + ' of ' + _prospects.length + ' contacts</div>';
@@ -2285,6 +2299,219 @@ async function showOptOut(prospectId, email) {
   await loadProspects();
   const i = _prospects.findIndex(p => p.id === prospectId);
   if (i >= 0 && _optOut.id !== prospectId) toggleOptOut(i);
+}
+
+// ── Prospects Intelligence: Stored Research, Signals, and Problem Statements ──
+
+async function importSampleProspects(btn) {
+  if (btn) { btn.disabled = true; btn.textContent = 'Importing...'; }
+  try {
+    const res = await api('/api/prospects/import-sample', { method: 'POST', body: '{}' });
+    if (res && res.status === 'ok') {
+      showToast('Imported ' + res.imported + ' sample prospects into stored database.', 'success');
+      await loadProspects();
+    } else {
+      showToast('Import failed: ' + ((res && res.message) || 'Unknown error'), 'error');
+    }
+  } catch (err) {
+    showToast('Failed to import: ' + err.message, 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.innerHTML = icon('download') + 'Import sample prospects'; }
+  }
+}
+
+async function toggleProspectIntel(i) {
+  const p = _prospects[i];
+  if (!p) return;
+  p._intelOpen = !p._intelOpen;
+  if (p._intelOpen && !p._intel) {
+    renderContacts();
+    try {
+      const [res, sigs, pss, prods] = await Promise.all([
+        api('/api/prospects/' + encodeURIComponent(p.id) + '/research'),
+        api('/api/prospects/' + encodeURIComponent(p.id) + '/signals'),
+        api('/api/prospects/' + encodeURIComponent(p.id) + '/problem-statements'),
+        api('/api/products')
+      ]);
+      p._intel = {
+        research: res || {},
+        signals: sigs || [],
+        problem_statements: pss || [],
+        products: (prods && prods.length) ? prods : [{id: 'default', name: 'Default Product'}]
+      };
+    } catch (e) {
+      p._intel = { research: {}, signals: [], problem_statements: [], products: [{id: 'default', name: 'Default Product'}] };
+    }
+  }
+  renderContacts();
+}
+
+async function runProspectResearch(i, btn) {
+  const p = _prospects[i];
+  if (!p) return;
+  if (btn) { btn.disabled = true; btn.textContent = 'Analyzing...'; }
+  try {
+    const res = await api('/api/prospects/' + encodeURIComponent(p.id) + '/research', { method: 'POST' });
+    if (res && !res.error) {
+      if (!p._intel) p._intel = {};
+      p._intel.research = res;
+      showToast('Research summary generated from stored text.', 'success');
+    } else {
+      showToast('Research error: ' + ((res && res.error) || 'Failed'), 'error');
+    }
+  } catch (e) {
+    showToast('Failed: ' + e.message, 'error');
+  } finally {
+    if (btn) btn.disabled = false;
+    renderContacts();
+  }
+}
+
+async function detectProspectSignals(i, btn) {
+  const p = _prospects[i];
+  if (!p) return;
+  if (btn) { btn.disabled = true; btn.textContent = 'Scanning...'; }
+  try {
+    const sigs = await api('/api/prospects/' + encodeURIComponent(p.id) + '/signals', { method: 'POST', body: '{}' });
+    if (Array.isArray(sigs)) {
+      if (!p._intel) p._intel = {};
+      p._intel.signals = sigs;
+      showToast('Detected ' + sigs.length + ' buying signal(s) with verbatim evidence.', 'success');
+    } else {
+      showToast('Signals error: ' + ((sigs && sigs.error) || 'Failed'), 'error');
+    }
+  } catch (e) {
+    showToast('Failed: ' + e.message, 'error');
+  } finally {
+    if (btn) btn.disabled = false;
+    renderContacts();
+  }
+}
+
+async function generateProspectProblemStatement(i, btn) {
+  const p = _prospects[i];
+  if (!p) return;
+  const sel = document.getElementById('ps-product-' + i);
+  const prodId = sel ? sel.value : 'default';
+  if (btn) { btn.disabled = true; btn.textContent = 'Generating...'; }
+  try {
+    const res = await api('/api/prospects/' + encodeURIComponent(p.id) + '/problem-statements', {
+      method: 'POST',
+      body: JSON.stringify({ product_id: prodId })
+    });
+    if (res && res.problem_statement) {
+      if (!p._intel) p._intel = {};
+      if (!p._intel.problem_statements) p._intel.problem_statements = [];
+      p._intel.problem_statements.unshift(res);
+      showToast('Problem statement generated (' + (res.mode || 'llm') + ').', 'success');
+    } else {
+      showToast('Error generating problem statement: ' + ((res && res.error) || 'Failed'), 'error');
+    }
+  } catch (e) {
+    showToast('Failed: ' + e.message, 'error');
+  } finally {
+    if (btn) btn.disabled = false;
+    renderContacts();
+  }
+}
+
+function prospectIntelPanel(p, i) {
+  if (!p._intel) return '<div class="card" style="padding:16px;margin:8px 0;">Loading intelligence from stored records...</div>';
+  const intel = p._intel;
+  const res = intel.research || {};
+  const sigs = intel.signals || [];
+  const pss = intel.problem_statements || [];
+  const prods = intel.products || [{id: 'default', name: 'Default Product'}];
+
+  let html = '<div class="card" style="padding:16px;margin:8px 0;background:var(--bg-2);border-radius:8px;">';
+  html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">' +
+    '<h3 style="margin:0;font-size:16px;">Intelligence & Research: ' + escHtml(p.company) + '</h3>' +
+    '<span class="chip">Stored Data &bull; Offline</span></div>';
+
+  // Section 1: Research
+  html += '<div style="background:var(--bg-card);padding:14px;border-radius:6px;margin-bottom:12px;border:1px solid var(--border);">' +
+    '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">' +
+    '<div style="font-weight:600;display:flex;align-items:center;gap:8px;">' + icon('discover') + ' Research Summary ' +
+    (res.mode ? '<span class="badge" style="font-size:10px;">' + escHtml(res.mode) + '</span>' : '') + '</div>' +
+    '<button class="btn btn-secondary btn-sm" onclick="runProspectResearch(' + i + ', this)">' + (res.summary ? 'Re-run Research' : 'Run Research') + '</button>' +
+    '</div>';
+
+  if (res.summary) {
+    html += '<p style="margin:0 0 8px 0;color:var(--text);line-height:1.4;">' + escHtml(res.summary) + '</p>';
+    if (res.key_facts && res.key_facts.length) {
+      html += '<div style="margin-top:6px;"><b style="font-size:12px;color:var(--text-2);">Key Facts:</b><ul style="margin:4px 0 8px 18px;padding:0;font-size:12px;">' +
+        res.key_facts.map(f => '<li>' + escHtml(f) + '</li>').join('') + '</ul></div>';
+    }
+    if (res.recent_events && res.recent_events.length) {
+      html += '<div style="margin-top:6px;"><b style="font-size:12px;color:var(--text-2);">Recent Events:</b><ul style="margin:4px 0 8px 18px;padding:0;font-size:12px;">' +
+        res.recent_events.map(e => '<li>' + escHtml(e) + '</li>').join('') + '</ul></div>';
+    }
+    if (res.gaps && res.gaps.length) {
+      html += '<div style="margin-top:6px;"><b style="font-size:12px;color:var(--text-2);">Information Gaps:</b><ul style="margin:4px 0 0 18px;padding:0;font-size:12px;color:var(--text-3);">' +
+        res.gaps.map(g => '<li>' + escHtml(g) + '</li>').join('') + '</ul></div>';
+    }
+  } else {
+    html += '<p class="muted" style="margin:0;font-size:13px;">No research summary generated yet. Click "Run Research" to analyze stored snippets.</p>';
+  }
+  html += '</div>';
+
+  // Section 2: Buying Signals
+  html += '<div style="background:var(--bg-card);padding:14px;border-radius:6px;margin-bottom:12px;border:1px solid var(--border);">' +
+    '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">' +
+    '<div style="font-weight:600;display:flex;align-items:center;gap:8px;">' + icon('signals') + ' Buying Signals (' + sigs.length + ')</div>' +
+    '<button class="btn btn-secondary btn-sm" onclick="detectProspectSignals(' + i + ', this)">' + (sigs.length ? 'Re-detect Signals' : 'Detect Signals') + '</button>' +
+    '</div>';
+
+  if (sigs.length) {
+    html += '<div style="display:grid;gap:8px;">';
+    for (const s of sigs) {
+      html += '<div style="padding:8px 12px;border-left:3px solid var(--primary);background:var(--bg-2);border-radius:4px;">' +
+        '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">' +
+        '<span class="badge" style="text-transform:uppercase;font-size:10px;">' + escHtml(s.label || s.code) + '</span>' +
+        '<span class="chip" style="font-size:11px;">' + escHtml(s.mode || 'llm') + '</span></div>' +
+        '<div style="font-style:italic;font-size:13px;color:var(--text);">“' + escHtml(s.evidence_quote || s.description) + '”</div>' +
+        '</div>';
+    }
+    html += '</div>';
+  } else {
+    html += '<p class="muted" style="margin:0;font-size:13px;">No buying signals extracted yet. Click "Detect Signals" to classify signals over stored text.</p>';
+  }
+  html += '</div>';
+
+  // Section 3: Problem Statements
+  html += '<div style="background:var(--bg-card);padding:14px;border-radius:6px;border:1px solid var(--border);">' +
+    '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">' +
+    '<div style="font-weight:600;display:flex;align-items:center;gap:8px;">' + icon('sparkle') + ' Problem Statements (per Product)</div>' +
+    '<div style="display:flex;gap:8px;align-items:center;">' +
+    '<select class="form-input" id="ps-product-' + i + '" style="padding:4px 8px;font-size:12px;width:auto;">' +
+    prods.map(pr => '<option value="' + escHtml(pr.id) + '">' + escHtml(pr.name) + '</option>').join('') +
+    '</select>' +
+    '<button class="btn btn-primary btn-sm" onclick="generateProspectProblemStatement(' + i + ', this)">Generate Problem Statement</button>' +
+    '</div></div>';
+
+  if (pss.length) {
+    html += '<div style="display:grid;gap:10px;">';
+    for (const item of pss) {
+      const prodMatch = prods.find(pr => pr.id === item.product_id);
+      const prName = prodMatch ? prodMatch.name : (item.product_id || 'Default');
+      html += '<div style="padding:10px;border:1px solid var(--border);border-radius:6px;background:var(--bg-2);">' +
+        '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">' +
+        '<span style="font-size:12px;font-weight:600;color:var(--primary);">' + escHtml(prName) + '</span>' +
+        '<span class="badge" style="font-size:10px;">' + escHtml(item.mode || 'llm') + '</span></div>' +
+        '<div style="margin-bottom:6px;font-size:13px;"><b>Problem:</b> ' + escHtml(item.problem_statement || item.statement) + '</div>' +
+        (item.why_now ? '<div style="margin-bottom:6px;font-size:13px;color:var(--text-2);"><b>Why Now:</b> ' + escHtml(item.why_now) + '</div>' : '') +
+        (item.evidence && item.evidence.length ? '<div style="font-size:12px;color:var(--text-3);"><b>Evidence:</b> ' +
+          (Array.isArray(item.evidence) ? item.evidence.map(e => escHtml(e)).join(' &bull; ') : escHtml(item.evidence)) + '</div>' : '') +
+        '</div>';
+    }
+    html += '</div>';
+  } else {
+    html += '<p class="muted" style="margin:0;font-size:13px;">No problem statements created yet. Choose a product and click "Generate Problem Statement".</p>';
+  }
+  html += '</div>';
+
+  html += '</div>';
+  return html;
 }
 
 // Opens a filled-in compose window in whatever Gmail account the browser is
@@ -2527,13 +2754,24 @@ function convoCard(c) {
     : '';
   const name = [c.first_name, c.last_name].filter(Boolean).join(' ') || c.company || 'Unknown';
   const stage = own(STAGE_LABELS, c.stage) ? '<span class="tag">' + STAGE_LABELS[c.stage] + '</span>' : '';
+  const labelText = c.label || c.intent || '';
+  const labelBadge = labelText ? '<span class="tag accent">' + escHtml(labelText) + '</span>' : '';
+  const confBadge = c.confidence ? '<span class="tag" style="background:rgba(255,255,255,0.06);">' + Math.round(c.confidence * 100) + '% conf</span>' : '';
+  const modeBadge = c.mode === 'non-LLM mode' ? '<span class="badge" style="background:#555;color:#fff;">non-LLM mode</span>' : '';
+  const actionBanner = c.suggested_next_action
+    ? '<div class="banner" style="margin-top:8px;padding:6px 10px;font-size:12px;background:rgba(255,255,255,0.03);border-radius:4px;display:flex;align-items:center;gap:6px;">' +
+      icon('sparkle') + '<div><b>Next action:</b> ' + escHtml(c.suggested_next_action) +
+      (c.reasoning ? ' <span class="muted">(' + escHtml(c.reasoning) + ')</span>' : '') + '</div></div>'
+    : '';
+
   return '<div class="convo-card"><div class="convo-head">' +
     '<span class="avatar">' + initials(c.first_name, c.last_name) + '</span>' +
     '<div><h3>' + escHtml(name) + '</h3><div class="sub">' +
       escHtml([c.company, c.prospect_email].filter(Boolean).join(' · ')) + ' · ' + relTime(c.updated_at) + '</div></div>' +
     // An escalation's intent badge says the same as its status: show one.
-    '<div class="tags">' + (c.intent && !(c.status === 'needs_human' && c.intent === 'escalate') ? badge(c.intent) : '') +
+    '<div class="tags">' + labelBadge + confBadge + modeBadge +
       stage + badge(c.status) + '</div></div>' +
+    actionBanner +
     '<div class="thread">' + (thread || '<p class="muted" style="font-size:13px">No messages in this thread yet.</p>') +
     draft + '</div>' + convoActions(c) + '</div>';
 }
@@ -3136,6 +3374,27 @@ async function loadCompany() {
     <div class="offer-actions"><button class="btn btn-primary btn-sm" onclick="saveCompanySection('icp')">Save</button></div>
   </section>
 
+  <section class="card company-card" aria-labelledby="co-multi-products-h">
+    <div class="company-card-head">
+      <h3 id="co-multi-products-h">Product Catalog &amp; ICPs</h3>
+      <span class="hint">Multi-product targeting and per-product ICP generation</span>
+    </div>
+    <div class="form-group">
+      <label class="form-label" for="product-selector">Select product</label>
+      <div style="display: flex; gap: 8px; align-items: center;">
+        <select class="form-input" id="product-selector" onchange="onSelectProduct(this.value)" style="flex: 1;"></select>
+        <button class="btn btn-secondary btn-sm" id="btn-generate-icp" onclick="generateSelectedProductIcp()">Generate ICP</button>
+      </div>
+    </div>
+    <div id="product-icp-display" class="product-icp-display" style="margin-top: 15px;"></div>
+    <div id="product-scores-display" class="product-scores-display" style="margin-top: 20px;"></div>
+
+    <div style="margin-top: 24px; border-top: 1px solid var(--border-color, #333); padding-top: 16px;">
+      <h4 style="margin: 0 0 10px 0; font-size: 14px; font-weight: 600;">Products List</h4>
+      <div id="product-list-table"></div>
+    </div>
+  </section>
+
   <section class="card company-card" aria-labelledby="co-sender-h">
     <div class="company-card-head"><h3 id="co-sender-h">Who it's from</h3>
       <span class="hint">${ce(s.company)}${s.email ? ' · ' + ce(s.email) : ''}</span></div>
@@ -3170,6 +3429,7 @@ async function loadCompany() {
   </section>` : ''}`;
   _offerIdeas = (o.entry_ideas || []).map(x => ({offer: x}));
   renderOfferIdeas();
+  loadProductsCatalog();
   const badge = document.getElementById('nav-company');
   if (badge) badge.textContent = o.proposed ? '1' : '';
 }
@@ -3276,6 +3536,246 @@ async function useProposedOffer() {
 async function dismissProposedOffer() {
   await api('/api/offer/propose', {method: 'DELETE'});
   loadCompany();
+}
+
+let _productsList = [];
+
+async function loadProductsCatalog() {
+  const sel = document.getElementById('product-selector');
+  const listDiv = document.getElementById('product-list-table');
+  if (!sel || !listDiv) return;
+
+  const data = await api('/api/products');
+  _productsList = Array.isArray(data) ? data : ((data && data.products) || []);
+
+  if (!_productsList.length) {
+    sel.innerHTML = '<option value="">No products found</option>';
+    listDiv.innerHTML = '<p class="desc">No products recorded.</p>';
+    return;
+  }
+
+  sel.innerHTML = _productsList.map(p =>
+    `<option value="${ce(p.id)}">${ce(p.name)} (${ce(p.id)})</option>`
+  ).join('');
+
+  listDiv.innerHTML = `<div style="display: flex; flex-direction: column; gap: 10px;">` +
+    _productsList.map(p => `
+      <div class="card" style="padding: 10px 14px; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); border-radius: 6px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+          <strong style="font-size: 14px;">${ce(p.name)}</strong>
+          <span class="tag ${p.status === 'active' ? 'ok' : ''}">${ce(p.status || 'active')}</span>
+        </div>
+        <p class="desc" style="margin: 2px 0 4px 0; font-size: 12px;">${ce(p.description || 'No description')}</p>
+        ${p.value_props ? `<div style="font-size: 12px; color: var(--text-muted);"><b style="color: var(--text-color);">Value Props:</b> ${ce(p.value_props)}</div>` : ''}
+      </div>
+    `).join('') + `</div>`;
+
+  const curId = sel.value;
+  if (curId) {
+    loadProductIcp(curId);
+    loadProductScores(curId);
+  }
+}
+
+async function onSelectProduct(productId) {
+  if (productId) {
+    loadProductIcp(productId);
+    loadProductScores(productId);
+  }
+}
+
+async function loadProductIcp(productId) {
+  const display = document.getElementById('product-icp-display');
+  if (!display) return;
+  display.innerHTML = '<p class="desc" style="font-size: 12px;">Loading ICP...</p>';
+
+  const res = await api(`/api/products/${encodeURIComponent(productId)}/icp`);
+  if (!res || res.error) {
+    display.innerHTML = `<div style="padding: 12px; background: rgba(255,255,255,0.02); border-radius: 6px; border: 1px dashed rgba(255,255,255,0.1);">
+      <p class="desc" style="margin: 0 0 6px 0;">No ICP generated yet for this product.</p>
+      <button class="btn btn-primary btn-sm" onclick="generateSelectedProductIcp()">Generate ICP now</button>
+    </div>`;
+    return;
+  }
+
+  const raw = res.raw || res.icp || {};
+  const model = res.model || 'local';
+  const painPoints = res.pain_points_list || raw.pain_points || [];
+  const titles = res.titles_list || raw.titles || [];
+  const disqualifiers = res.disqualifiers_list || raw.disqualifiers || [];
+  const industries = res.industries_list || raw.industries || [];
+  const size = res.company_size || raw.company_size || 'N/A';
+
+  display.innerHTML = `
+    <div style="padding: 14px; background: rgba(255,255,255,0.04); border-radius: 6px; border: 1px solid rgba(255,255,255,0.1);">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+        <h4 style="margin: 0; font-size: 13px; font-weight: 600;">Generated Ideal Customer Profile</h4>
+        <span class="tag accent">Model: ${ce(model)}</span>
+      </div>
+      <div class="company-grid" style="grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 10px;">
+        <div>
+          <div class="form-label" style="font-size: 11px;">Target Titles</div>
+          <div style="font-size: 12px;">${titles.map(t => `<span class="tag" style="margin: 2px;">${ce(t)}</span>`).join('') || '<span class="desc">None</span>'}</div>
+        </div>
+        <div>
+          <div class="form-label" style="font-size: 11px;">Target Industries &amp; Size</div>
+          <div style="font-size: 12px;">${industries.map(i => `<span class="tag" style="margin: 2px;">${ce(i)}</span>`).join('') || '<span class="desc">None</span>'} <span class="tag" style="margin: 2px;">${ce(size)}</span></div>
+        </div>
+      </div>
+      <div style="margin-bottom: 8px;">
+        <div class="form-label" style="font-size: 11px;">Key Pain Points</div>
+        <ul style="margin: 4px 0 0 16px; padding: 0; font-size: 12px;">
+          ${painPoints.map(p => `<li>${ce(p)}</li>`).join('') || '<li>None</li>'}
+        </ul>
+      </div>
+      <div>
+        <div class="form-label" style="font-size: 11px;">Disqualifiers</div>
+        <ul style="margin: 4px 0 0 16px; padding: 0; font-size: 12px; color: var(--text-muted);">
+          ${disqualifiers.map(d => `<li>${ce(d)}</li>`).join('') || '<li>None</li>'}
+        </ul>
+      </div>
+    </div>
+  `;
+}
+
+async function generateSelectedProductIcp() {
+  const sel = document.getElementById('product-selector');
+  const productId = sel ? sel.value : null;
+  if (!productId) {
+    showToast('Please select a product first.', 'error');
+    return;
+  }
+  const btn = document.getElementById('btn-generate-icp');
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = 'Generating...';
+  }
+  const display = document.getElementById('product-icp-display');
+  if (display) {
+    display.innerHTML = '<p class="desc">Generating ICP with local Ollama model...</p>';
+  }
+
+  const res = await api(`/api/products/${encodeURIComponent(productId)}/icp`, { method: 'POST' });
+  if (btn) {
+    btn.disabled = false;
+    btn.textContent = 'Generate ICP';
+  }
+  if (!res || res.error) {
+    showToast((res && res.error) || 'Failed to generate ICP.', 'error');
+    if (display) {
+      display.innerHTML = `<p class="desc" style="color: var(--danger-color, #ff6b6b);">${ce((res && res.error) || 'Failed to generate ICP')}</p>`;
+    }
+    return;
+  }
+  showToast('ICP generated successfully!', 'success');
+  loadProductIcp(productId);
+}
+
+async function loadProductScores(productId) {
+  const display = document.getElementById('product-scores-display');
+  if (!display) return;
+  display.innerHTML = '<p class="desc" style="font-size: 12px;">Loading product scoring rankings...</p>';
+
+  const scores = await api(`/api/products/${encodeURIComponent(productId)}/scores`);
+  if (!scores || !scores.length) {
+    display.innerHTML = `
+      <div style="padding: 14px; background: rgba(255,255,255,0.02); border-radius: 6px; border: 1px dashed rgba(255,255,255,0.1);">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <h4 style="margin: 0; font-size: 13px; font-weight: 600;">Ranked Prospects for Product</h4>
+          <button class="btn btn-secondary btn-sm" onclick="scoreSelectedProduct()">Score Prospects</button>
+        </div>
+        <p class="desc" style="margin: 8px 0 0 0; font-size: 12px;">No scores computed yet for this product. Click "Score Prospects" to evaluate stored prospects.</p>
+      </div>`;
+    return;
+  }
+
+  let rows = scores.map((s, idx) => {
+    const bd = s.breakdown || {};
+    const reasons = Array.isArray(s.top_reasons) ? s.top_reasons : [];
+    const modeBadge = s.mode === 'non-LLM mode' 
+      ? '<span class="tag" style="background: rgba(255, 170, 0, 0.2); color: #ffaa00;">non-LLM mode</span>'
+      : '<span class="tag accent">LLM</span>';
+
+    return `
+      <tr style="border-bottom: 1px solid rgba(255,255,255,0.06);">
+        <td style="padding: 8px; font-weight: bold; color: var(--accent); width: 32px;">#${idx + 1}</td>
+        <td style="padding: 8px;">
+          <div style="font-weight: 600; font-size: 13px;">${ce(s.company || 'Unknown')}</div>
+          <div style="font-size: 11px; color: var(--text-muted);">${ce(s.contact_name || '')}${s.title ? ' · ' + ce(s.title) : ''}</div>
+          <div style="font-size: 11px; color: var(--text-muted);">${ce(s.industry || '')}${s.size ? ' · ' + ce(s.size) : ''}</div>
+        </td>
+        <td style="padding: 8px; text-align: center; width: 70px;">
+          <div style="font-size: 16px; font-weight: 700; color: ${s.score >= 70 ? '#4ade80' : s.score >= 40 ? '#facc15' : '#f87171'};">${s.score}</div>
+          <div style="font-size: 10px; color: var(--text-muted);">/ 100</div>
+        </td>
+        <td style="padding: 8px; font-size: 11px; line-height: 1.4;">
+          <div><b>Title:</b> ${bd.title_match || 0} / 20 &nbsp;|&nbsp; <b>Industry:</b> ${bd.industry_match || 0} / 20</div>
+          <div><b>Size:</b> ${bd.company_size_match || 0} / 15 &nbsp;|&nbsp; <b>Signals:</b> ${bd.buying_signals || 0} / 20</div>
+          <div><b>Embedding:</b> ${bd.embedding_similarity || 0} / 25</div>
+        </td>
+        <td style="padding: 8px; font-size: 11px; max-width: 280px;">
+          ${s.rationale ? `<div style="font-weight: 500; margin-bottom: 4px;">${ce(s.rationale)}</div>` : ''}
+          ${reasons.length ? `<ul style="margin: 2px 0 2px 14px; padding: 0; font-size: 10px; color: var(--text-muted);">${reasons.map(r => `<li>${ce(r)}</li>`).join('')}</ul>` : ''}
+          ${s.main_risk ? `<div style="font-size: 10px; color: #f87171; margin-top: 2px;"><b>Risk:</b> ${ce(s.main_risk)}</div>` : ''}
+        </td>
+        <td style="padding: 8px; text-align: right; width: 90px;">
+          ${modeBadge}
+        </td>
+      </tr>
+    `;
+  }).join('');
+
+  display.innerHTML = `
+    <div style="padding: 14px; background: rgba(255,255,255,0.03); border-radius: 6px; border: 1px solid rgba(255,255,255,0.1);">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+        <div>
+          <h4 style="margin: 0; font-size: 14px; font-weight: 600;">Ranked Prospects &amp; Fit Scoring</h4>
+          <span class="hint" style="font-size: 11px;">Scored 0–100 via rule weights + embedding similarity with LLM rationale</span>
+        </div>
+        <button class="btn btn-secondary btn-sm" onclick="scoreSelectedProduct()">Recalculate Scores</button>
+      </div>
+      <div class="table-card" style="overflow-x: auto;">
+        <table class="nowrap" style="width: 100%; border-collapse: collapse;">
+          <thead>
+            <tr style="border-bottom: 1px solid rgba(255,255,255,0.1); text-align: left; font-size: 11px; color: var(--text-muted);">
+              <th style="padding: 6px 8px;">Rank</th>
+              <th style="padding: 6px 8px;">Prospect</th>
+              <th style="padding: 6px 8px; text-align: center;">Score</th>
+              <th style="padding: 6px 8px;">Score Breakdown</th>
+              <th style="padding: 6px 8px;">Rationale &amp; Reasons</th>
+              <th style="padding: 6px 8px; text-align: right;">Mode</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rows}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+}
+
+async function scoreSelectedProduct() {
+  const sel = document.getElementById('product-selector');
+  const productId = sel ? sel.value : null;
+  if (!productId) {
+    showToast('Please select a product first.', 'error');
+    return;
+  }
+  const display = document.getElementById('product-scores-display');
+  if (display) {
+    display.innerHTML = '<p class="desc">Calculating prospect scores for this product (rules + embeddings + rationale)...</p>';
+  }
+  const res = await api(`/api/products/${encodeURIComponent(productId)}/score`, { method: 'POST' });
+  if (!res || res.error) {
+    showToast((res && res.error) || 'Failed to score prospects.', 'error');
+    if (display) {
+      display.innerHTML = `<p class="desc" style="color: var(--danger-color, #ff6b6b);">${ce((res && res.error) || 'Failed to score prospects')}</p>`;
+    }
+    return;
+  }
+  showToast(`Scored ${res.scored_count || 0} prospects successfully!`, 'success');
+  loadProductScores(productId);
 }
 
 (function wireInboxDialog() {

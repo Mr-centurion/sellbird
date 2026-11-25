@@ -103,6 +103,13 @@ class Brain:
         return PROVIDER_LABELS.get(self.provider, "Ollama")
 
     @property
+    def last_model(self) -> str:
+        """The actual model name returned by Ollama in its latest response."""
+        if hasattr(self, "ollama") and self.ollama is not None:
+            return getattr(self.ollama, "last_model", "") or self.model
+        return self.model
+
+    @property
     def paused_reason(self) -> str:
         """Why calls are currently being skipped ("" when they aren't)."""
         transport_paused = (
@@ -176,6 +183,7 @@ class Brain:
         max_retries: int = DEFAULT_MAX_RETRIES,
         agent: str = "",
         task: str = "",
+        num_predict: int | None = None,
     ) -> str:
         """Send a prompt to Ollama and return the response text.
 
@@ -226,10 +234,11 @@ class Brain:
                     task=task or (session_id or ""),
                     expect_json=expect_json,
                     timeout=timeout,
+                    num_predict=num_predict,
                 )
                 if self.state is not None:
                     try:
-                        await self.state.increment_usage(provider="ollama")
+                        await self.state.increment_usage(provider="ollama", model=self.last_model)
                     except Exception as e:
                         logger.warning(f"Failed to record usage counter: {e}")
 
@@ -273,6 +282,7 @@ class Brain:
         session_id: str | None = None,
         agent: str = "",
         task: str = "",
+        num_predict: int | None = None,
     ) -> dict | list | None:
         """Send a prompt and parse the response as JSON."""
         full_prompt = (
@@ -280,7 +290,12 @@ class Brain:
             + "\n\nRespond ONLY with valid JSON. No markdown, no explanation."
         )
         response = await self.think(
-            full_prompt, session_id=session_id, expect_json=True, agent=agent, task=task
+            full_prompt,
+            session_id=session_id,
+            expect_json=True,
+            agent=agent,
+            task=task,
+            num_predict=num_predict,
         )
         self.last_reply_empty = not response
         if not response:

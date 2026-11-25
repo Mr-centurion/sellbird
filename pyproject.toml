@@ -38,6 +38,7 @@ dependencies = [
     "uvicorn>=0.34,<1",
     "mcp>=2.3,<3",
     "psutil>=5.9.0",
+    "sentence-transformers>=2.2.0",
 ]
 
 [project.optional-dependencies]

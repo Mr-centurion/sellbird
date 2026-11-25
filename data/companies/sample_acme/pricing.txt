@@ -1,0 +1,13 @@
+SAMPLE DATA: Acme Pricing & Packaging
+
+Transparent, value-aligned pricing tiers for each product line:
+
+Acme Flow (Operations Automation):
+- Starter: $499/month for up to 10 automated workflows and 5,000 monthly events.
+- Growth: $1,499/month for unlimited workflows, dedicated webhooks, and priority ERP connectors.
+- Enterprise: Custom pricing from $3,500/month with SLA guarantees, SOC 2 compliance package, and custom integrations.
+
+Acme Pulse (Engineering Telemetry):
+- Team: $15/developer/month with full DORA metrics and Git repository analytics.
+- Organization: $35/developer/month including incident response metrics, test telemetry, and Slack/Teams alerts.
+- Enterprise: Custom volume licensing with single sign-on (SSO), audit logs, and on-premises deployment options.

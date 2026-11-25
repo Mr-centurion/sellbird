@@ -10,12 +10,13 @@ upgrade cleanly in place.
 """
 
 import json
+import re
 import uuid
 from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
 from datetime import datetime, date, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 import aiosqlite
 
@@ -585,6 +586,94 @@ MIGRATIONS: list[str] = [
     );
     CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
     """,
+    """
+    CREATE TABLE IF NOT EXISTS products (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        description TEXT DEFAULT '',
+        value_props TEXT DEFAULT '',
+        status TEXT DEFAULT 'active',
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS icps (
+        id TEXT PRIMARY KEY,
+        product_id TEXT NOT NULL,
+        pain_points TEXT DEFAULT '',
+        titles TEXT DEFAULT '',
+        disqualifiers TEXT DEFAULT '',
+        industries TEXT DEFAULT '',
+        company_size TEXT DEFAULT '',
+        geography TEXT DEFAULT '',
+        buyer_persona TEXT DEFAULT '',
+        model TEXT DEFAULT '',
+        raw_json TEXT DEFAULT '',
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS signals (
+        id TEXT PRIMARY KEY,
+        product_id TEXT,
+        code TEXT,
+        description TEXT,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS problem_statements (
+        id TEXT PRIMARY KEY,
+        product_id TEXT,
+        statement TEXT,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS emails (
+        id TEXT PRIMARY KEY,
+        product_id TEXT,
+        prospect_id TEXT DEFAULT '',
+        subject TEXT,
+        body TEXT,
+        step INTEGER DEFAULT 1,
+        model TEXT DEFAULT '',
+        mode TEXT DEFAULT 'llm',
+        status TEXT DEFAULT 'draft',
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS scores (
+        id TEXT PRIMARY KEY,
+        product_id TEXT,
+        prospect_id TEXT,
+        score INTEGER,
+        breakdown TEXT DEFAULT '{}',
+        reasoning TEXT DEFAULT '',
+        rationale TEXT DEFAULT '',
+        top_reasons TEXT DEFAULT '[]',
+        main_risk TEXT DEFAULT '',
+        mode TEXT DEFAULT 'llm',
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_icps_product_id ON icps(product_id);
+    CREATE INDEX IF NOT EXISTS idx_signals_product_id ON signals(product_id);
+    CREATE INDEX IF NOT EXISTS idx_problem_statements_product_id ON problem_statements(product_id);
+    CREATE INDEX IF NOT EXISTS idx_emails_product_id ON emails(product_id);
+    CREATE INDEX IF NOT EXISTS idx_scores_product_id ON scores(product_id);
+    """,
+    # ── v20: offline stored research, buying signals, problem statements, embedding cache ──
+    """
+    CREATE TABLE IF NOT EXISTS embedding_cache (
+        text_hash TEXT PRIMARY KEY,
+        embedding BLOB,
+        model TEXT DEFAULT 'all-MiniLM-L6-v2',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS prospect_research (
+        id TEXT PRIMARY KEY,
+        prospect_id TEXT NOT NULL,
+        summary TEXT DEFAULT '',
+        key_facts TEXT DEFAULT '[]',
+        recent_events TEXT DEFAULT '[]',
+        gaps TEXT DEFAULT '[]',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_prospect_research_pid ON prospect_research(prospect_id);
+    """,
 ]
 
 BRAIN_PROVIDERS = ("ollama",)
@@ -650,11 +739,73 @@ class StateManager:
             async with db.execute("PRAGMA user_version") as cursor:
                 (version,) = await cursor.fetchone()
 
+            # Ensure required columns exist on tables across migrations
+            table_col_map = {
+                "prospects": [("stored_text", "TEXT DEFAULT ''")],
+                "signals": [
+                    ("product_id", "TEXT DEFAULT ''"),
+                    ("prospect_id", "TEXT DEFAULT ''"),
+                    ("label", "TEXT DEFAULT ''"),
+                    ("evidence_quote", "TEXT DEFAULT ''"),
+                    ("mode", "TEXT DEFAULT 'llm'"),
+                ],
+                "problem_statements": [
+                    ("product_id", "TEXT DEFAULT ''"),
+                    ("prospect_id", "TEXT DEFAULT ''"),
+                    ("why_now", "TEXT DEFAULT ''"),
+                    ("evidence", "TEXT DEFAULT '[]'"),
+                    ("mode", "TEXT DEFAULT 'llm'"),
+                    ("problem_statement", "TEXT DEFAULT ''"),
+                ],
+                "icps": [("product_id", "TEXT DEFAULT ''")],
+                "emails": [
+                    ("product_id", "TEXT DEFAULT ''"),
+                    ("prospect_id", "TEXT DEFAULT ''"),
+                    ("model", "TEXT DEFAULT ''"),
+                    ("mode", "TEXT DEFAULT 'llm'"),
+                    ("status", "TEXT DEFAULT 'draft'"),
+                ],
+                "scores": [
+                    ("product_id", "TEXT DEFAULT ''"),
+                    ("prospect_id", "TEXT DEFAULT ''"),
+                    ("breakdown", "TEXT DEFAULT '{}'"),
+                    ("reasoning", "TEXT DEFAULT ''"),
+                    ("rationale", "TEXT DEFAULT ''"),
+                    ("top_reasons", "TEXT DEFAULT '[]'"),
+                    ("main_risk", "TEXT DEFAULT ''"),
+                    ("mode", "TEXT DEFAULT 'llm'"),
+                ],
+                "conversations": [
+                    ("label", "TEXT DEFAULT ''"),
+                    ("confidence", "REAL DEFAULT 0.0"),
+                    ("reasoning", "TEXT DEFAULT ''"),
+                    ("suggested_next_action", "TEXT DEFAULT ''"),
+                    ("mode", "TEXT DEFAULT 'llm'"),
+                ],
+            }
+
+            async def _ensure_cols():
+                for tbl, cols_to_add in table_col_map.items():
+                    try:
+                        async with db.execute(f"PRAGMA table_info({tbl})") as cur:
+                            cols = [r[1] for r in await cur.fetchall()]
+                            if cols:
+                                for cname, ctype in cols_to_add:
+                                    if cname not in cols:
+                                        await db.execute(f"ALTER TABLE {tbl} ADD COLUMN {cname} {ctype}")
+                                        await db.commit()
+                    except Exception:
+                        pass
+
+            await _ensure_cols()
+
             for target, script in enumerate(MIGRATIONS, start=1):
                 if version < target:
                     await db.executescript(script)
                     await db.execute(f"PRAGMA user_version = {target}")
                     await db.commit()
+
+            await _ensure_cols()
 
     # ── Companies ──
 
@@ -879,6 +1030,8 @@ class StateManager:
                             break
         return prospect.id
 
+    save_prospect = add_prospect
+
     async def get_prospect(self, prospect_id: str) -> Prospect | None:
         async with self._connect() as db:
             db.row_factory = aiosqlite.Row
@@ -894,6 +1047,17 @@ class StateManager:
             async with db.execute(
                 "SELECT * FROM prospects WHERE status = ? ORDER BY created_at DESC",
                 (status,),
+            ) as cursor:
+                rows = await cursor.fetchall()
+                return [self._prospect_from_row(r) for r in rows]
+
+    async def get_prospects(self, limit: int = 200) -> list[Prospect]:
+        """List prospects ordered by created_at DESC."""
+        async with self._connect() as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                "SELECT * FROM prospects ORDER BY created_at DESC LIMIT ?",
+                (limit,),
             ) as cursor:
                 rows = await cursor.fetchall()
                 return [self._prospect_from_row(r) for r in rows]
@@ -2634,21 +2798,24 @@ class StateManager:
 
     async def get_usage_today(self, provider: str = "ollama") -> int:
         """Brain calls made today."""
-        today = date.today().isoformat()
+        today_utc = datetime.now(timezone.utc).date().isoformat()
+        today_local = date.today().isoformat()
         async with self._connect() as db:
             async with db.execute(
-                "SELECT COUNT(*) FROM inference_log WHERE date(ts) = ?", (today,)
+                "SELECT COUNT(*) FROM inference_log WHERE date(ts) = ? OR date(ts) = ?",
+                (today_utc, today_local),
             ) as cursor:
                 row = await cursor.fetchone()
                 return (row[0] or 0) if row else 0
 
-    async def increment_usage(self, provider: str = "ollama"):
+    async def increment_usage(self, provider: str = "ollama", model: str = ""):
         ts = datetime.now(timezone.utc).isoformat()
+        log_model = model or provider or "ollama"
         async with self._connect() as db:
             await db.execute(
                 """INSERT INTO inference_log (ts, agent, task, model, host, latency_ms, status)
-                   VALUES (?, 'brain', 'usage', 'ollama', 'localhost', 0, 'ok')""",
-                (ts,),
+                   VALUES (?, 'brain', 'usage', ?, 'localhost', 0, 'ok')""",
+                (ts, log_model),
             )
             await db.commit()
 
@@ -2802,11 +2969,8 @@ class StateManager:
                 "SELECT COUNT(*) FROM conversations WHERE status = 'needs_human' AND intent = 'ooo'"
             ) as cursor:
                 auto_reply_handoffs = (await cursor.fetchone())[0]
-            async with db.execute(
-                "SELECT COUNT(*) FROM inference_log WHERE date(ts) = ?", (today,)
-            ) as cursor:
-                usage_row = await cursor.fetchone()
-                usage_today = (usage_row[0] or 0) if usage_row else 0
+
+        usage_today = await self.get_usage_today()
 
         return {
             "prospects": prospect_counts,
@@ -2905,5 +3069,746 @@ class StateManager:
                     return [dict(r) for r in rows]
         except Exception:
             return []
+
+    # ── Products and Multi-Product ICPs ──
+
+    async def add_product(
+        self,
+        name: Any,
+        description: Any = "",
+        value_props: Any = "",
+        status: str = "active",
+        product_id: str | None = None,
+    ) -> dict:
+        """Add or update a product."""
+        if isinstance(name, (list, tuple)):
+            name_str = " ".join(str(x) for x in name)
+        else:
+            name_str = str(name or "")
+
+        if isinstance(description, (list, tuple)):
+            desc_str = "\n".join(str(x) for x in description)
+        elif isinstance(description, dict):
+            desc_str = json.dumps(description)
+        else:
+            desc_str = str(description or "")
+
+        if isinstance(value_props, (list, tuple)):
+            val_str = "\n".join(str(x) for x in value_props)
+        elif isinstance(value_props, dict):
+            val_str = json.dumps(value_props)
+        else:
+            val_str = str(value_props or "")
+
+        status_str = str(status or "active")
+
+        if not product_id:
+            slug = re.sub(r"[^a-z0-9_-]", "_", name_str.lower()).strip("_")
+            product_id = slug or f"prod_{uuid.uuid4().hex[:8]}"
+        else:
+            product_id = str(product_id)
+
+        async with storage.connect(self.db_path) as db:
+            await db.execute(
+                """
+                INSERT INTO products (id, name, description, value_props, status)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    name = excluded.name,
+                    description = excluded.description,
+                    value_props = excluded.value_props,
+                    status = excluded.status
+                """,
+                (product_id, name_str, desc_str, val_str, status_str),
+            )
+            await db.commit()
+        return await self.get_product(product_id)
+
+    save_product = add_product
+
+    async def get_product(self, product_id: str) -> dict | None:
+        """Get product by id. Falls back to sellbird.yaml default if id == 'default'."""
+        async with storage.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                "SELECT id, name, description, value_props, status, created_at FROM products WHERE id = ?",
+                (product_id,),
+            ) as cursor:
+                row = await cursor.fetchone()
+                if row:
+                    return dict(row)
+
+        if product_id == "default":
+            try:
+                from sellbird.config import load_config
+                cfg = load_config()
+                p = cfg.product
+                return {
+                    "id": "default",
+                    "name": p.name or "Default Product",
+                    "description": p.description or "",
+                    "value_props": ", ".join(p.key_benefits) if p.key_benefits else "",
+                    "status": "active",
+                    "created_at": "",
+                }
+            except Exception:
+                pass
+        return None
+
+    async def list_products(self) -> list[dict]:
+        """List all products, falling back to sellbird.yaml if products table is empty."""
+        async with storage.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                "SELECT id, name, description, value_props, status, created_at FROM products ORDER BY created_at ASC"
+            ) as cursor:
+                rows = await cursor.fetchall()
+                if rows:
+                    return [dict(r) for r in rows]
+
+        # Backward compatibility with single-product sellbird.yaml
+        try:
+            from sellbird.config import load_config
+            cfg = load_config()
+            p = cfg.product
+            return [
+                {
+                    "id": "default",
+                    "name": p.name or "Default Product",
+                    "description": p.description or "",
+                    "value_props": ", ".join(p.key_benefits) if p.key_benefits else "",
+                    "status": "active",
+                    "created_at": "",
+                }
+            ]
+        except Exception:
+            return []
+
+    async def update_product(self, product_id: str, **fields) -> dict | None:
+        """Update fields on a product."""
+        allowed = {"name", "description", "value_props", "status"}
+        valid_fields = {k: v for k, v in fields.items() if k in allowed}
+        if not valid_fields:
+            return await self.get_product(product_id)
+
+        set_clause = ", ".join(f"{k} = ?" for k in valid_fields.keys())
+        values = list(valid_fields.values()) + [product_id]
+        async with storage.connect(self.db_path) as db:
+            await db.execute(f"UPDATE products SET {set_clause} WHERE id = ?", values)
+            await db.commit()
+        return await self.get_product(product_id)
+
+    async def save_icp(self, product_id: str, icp_data: dict, model: str = "") -> dict:
+        """Save an ICP record for a product."""
+        icp_id = f"icp_{product_id}"
+        pain_points = icp_data.get("pain_points", [])
+        if isinstance(pain_points, list):
+            pain_points_str = "\n".join(str(x) for x in pain_points)
+        else:
+            pain_points_str = str(pain_points or "")
+
+        titles = icp_data.get("titles", [])
+        if isinstance(titles, list):
+            titles_str = "\n".join(str(x) for x in titles)
+        else:
+            titles_str = str(titles or "")
+
+        disqualifiers = icp_data.get("disqualifiers", [])
+        if isinstance(disqualifiers, list):
+            disqualifiers_str = "\n".join(str(x) for x in disqualifiers)
+        else:
+            disqualifiers_str = str(disqualifiers or "")
+
+        industries = icp_data.get("industries", [])
+        if isinstance(industries, list):
+            industries_str = "\n".join(str(x) for x in industries)
+        else:
+            industries_str = str(industries or "")
+
+        geography = icp_data.get("geography", [])
+        if isinstance(geography, list):
+            geography_str = "\n".join(str(x) for x in geography)
+        else:
+            geography_str = str(geography or "")
+
+        company_size = str(icp_data.get("company_size", "") or "")
+        buyer_persona = str(icp_data.get("buyer_persona", "") or "")
+        raw_json = json.dumps(icp_data)
+
+        async with storage.connect(self.db_path) as db:
+            await db.execute(
+                """
+                INSERT INTO icps (id, product_id, pain_points, titles, disqualifiers, industries, company_size, geography, buyer_persona, model, raw_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    pain_points = excluded.pain_points,
+                    titles = excluded.titles,
+                    disqualifiers = excluded.disqualifiers,
+                    industries = excluded.industries,
+                    company_size = excluded.company_size,
+                    geography = excluded.geography,
+                    buyer_persona = excluded.buyer_persona,
+                    model = excluded.model,
+                    raw_json = excluded.raw_json,
+                    created_at = CURRENT_TIMESTAMP
+                """,
+                (
+                    icp_id,
+                    product_id,
+                    pain_points_str,
+                    titles_str,
+                    disqualifiers_str,
+                    industries_str,
+                    company_size,
+                    geography_str,
+                    buyer_persona,
+                    model,
+                    raw_json,
+                ),
+            )
+            await db.commit()
+        return await self.get_icp(product_id)
+
+    async def get_icp(self, product_id: str) -> dict | None:
+        """Fetch ICP for a given product_id, with fallback to sellbird.yaml for 'default'."""
+        async with storage.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                "SELECT * FROM icps WHERE product_id = ? ORDER BY created_at DESC LIMIT 1",
+                (product_id,),
+            ) as cursor:
+                row = await cursor.fetchone()
+                if row:
+                    d = dict(row)
+                    try:
+                        d["raw"] = json.loads(d["raw_json"]) if d.get("raw_json") else {}
+                    except Exception:
+                        d["raw"] = {}
+                    d["pain_points_list"] = [line for line in (d.get("pain_points") or "").split("\n") if line.strip()]
+                    d["titles_list"] = [line for line in (d.get("titles") or "").split("\n") if line.strip()]
+                    d["disqualifiers_list"] = [line for line in (d.get("disqualifiers") or "").split("\n") if line.strip()]
+                    d["industries_list"] = [line for line in (d.get("industries") or "").split("\n") if line.strip()]
+                    d["geography_list"] = [line for line in (d.get("geography") or "").split("\n") if line.strip()]
+                    return d
+
+        if product_id == "default":
+            try:
+                from sellbird.config import load_config
+                cfg = load_config()
+                icp_cfg = getattr(cfg, "icp", None)
+                if not icp_cfg:
+                    return None
+                return {
+                    "id": "icp_default",
+                    "product_id": "default",
+                    "model": "config",
+                    "company_size": icp_cfg.company_size,
+                    "pain_points": "",
+                    "titles": "\n".join(icp_cfg.titles),
+                    "disqualifiers": "",
+                    "industries": "\n".join(icp_cfg.industries),
+                    "geography": "\n".join(icp_cfg.geography),
+                    "buyer_persona": "",
+                    "pain_points_list": [],
+                    "titles_list": icp_cfg.titles,
+                    "disqualifiers_list": [],
+                    "industries_list": icp_cfg.industries,
+                    "geography_list": icp_cfg.geography,
+                    "raw": {
+                        "industries": icp_cfg.industries,
+                        "company_size": icp_cfg.company_size,
+                        "titles": icp_cfg.titles,
+                        "geography": icp_cfg.geography,
+                    },
+                    "created_at": "",
+                }
+            except Exception:
+                pass
+        return None
+
+    # ── Offline Research, Signals, and Problem Statements ──
+
+    async def import_prospects_from_file(self, file_path: str | Path) -> int:
+        """Import prospects from a JSON file into the DB as raw stored data."""
+        p = Path(file_path)
+        if not p.is_absolute():
+            from sellbird.paths import PROJECT_ROOT
+            p = PROJECT_ROOT / p
+        with open(p, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return await self.import_prospects_list(data)
+
+    async def import_prospects_list(self, prospects_data: list[dict]) -> int:
+        """Import a list of prospect dicts into the DB as raw stored data."""
+        imported = 0
+        async with storage.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            for p in prospects_data:
+                company_name = str(p.get("company") or "").strip()
+                industry = str(p.get("industry") or "").strip()
+                size = str(p.get("size") or "").strip()
+                contact_name = str(p.get("contact_name") or "").strip()
+                contact_title = str(p.get("contact_title") or "").strip()
+                email = str(p.get("contact_email") or "").strip().lower()
+                desc = str(p.get("website_description") or "").strip()
+                news = p.get("recent_news") or []
+                if isinstance(news, str):
+                    news = [news]
+                news_lines = "\n".join(f"- {n}" for n in news)
+
+                stored_text = (
+                    f"Company: {company_name} [SAMPLE DATA]\n"
+                    f"Industry: {industry}\n"
+                    f"Size: {size}\n"
+                    f"Contact: {contact_name} ({contact_title})\n"
+                    f"Website Description:\n{desc}\n\n"
+                    f"Recent News:\n{news_lines}\n"
+                )
+
+                # Company record
+                domain = email.split("@")[1] if "@" in email else f"{re.sub(r'[^a-z0-9]', '', company_name.lower())}.com"
+                comp_id = _new_id()
+                async with db.execute("SELECT id FROM companies WHERE domain = ? OR name = ?", (domain, company_name)) as cur:
+                    c_row = await cur.fetchone()
+                    if c_row:
+                        comp_id = c_row["id"]
+                        await db.execute(
+                            "UPDATE companies SET description = ?, industry = ?, company_size = ?, notes = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                            (desc, industry, size, json.dumps({"recent_news": news, "sample_data": "SAMPLE DATA"}), comp_id),
+                        )
+                    else:
+                        await db.execute(
+                            "INSERT INTO companies (id, name, domain, website, description, industry, company_size, notes) "
+                            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                            (comp_id, company_name, domain, f"https://{domain}", desc, industry, size, json.dumps({"recent_news": news, "sample_data": "SAMPLE DATA"})),
+                        )
+
+                # Split name
+                parts = contact_name.split(" ", 1)
+                first_name = parts[0] if parts else ""
+                last_name = parts[1] if len(parts) > 1 else ""
+
+                prospect_id = _new_id()
+                async with db.execute("SELECT id FROM prospects WHERE email = ?", (email,)) as cur:
+                    p_row = await cur.fetchone()
+                    if p_row:
+                        prospect_id = p_row["id"]
+                        await db.execute(
+                            "UPDATE prospects SET company_id = ?, first_name = ?, last_name = ?, title = ?, company = ?, "
+                            "industry = ?, company_size = ?, stored_text = ?, personalization_notes = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                            (comp_id, first_name, last_name, contact_title, company_name, industry, size, stored_text, f"SAMPLE DATA | {desc[:120]}...", prospect_id),
+                        )
+                    else:
+                        await db.execute(
+                            "INSERT INTO prospects (id, company_id, first_name, last_name, email, title, company, industry, company_size, stored_text, personalization_notes, status) "
+                            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'new')",
+                            (prospect_id, comp_id, first_name, last_name, email, contact_title, company_name, industry, size, stored_text, f"SAMPLE DATA | {desc[:120]}..."),
+                        )
+                imported += 1
+            await db.commit()
+        return imported
+
+    async def get_prospect_stored_text(self, prospect_id: str) -> str:
+        """Fetch raw stored text for a prospect, reconstructing from company notes/description if empty."""
+        async with storage.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute("SELECT * FROM prospects WHERE id = ?", (prospect_id,)) as cur:
+                p_row = await cur.fetchone()
+                if not p_row:
+                    return ""
+                p = dict(p_row)
+                if p.get("stored_text"):
+                    return p["stored_text"]
+
+                # Fallback to company data
+                comp_id = p.get("company_id")
+                comp = {}
+                if comp_id:
+                    async with db.execute("SELECT * FROM companies WHERE id = ?", (comp_id,)) as ccur:
+                        c_row = await ccur.fetchone()
+                        if c_row:
+                            comp = dict(c_row)
+
+                company = p.get("company") or comp.get("name") or "Unknown Company"
+                industry = p.get("industry") or comp.get("industry") or ""
+                desc = comp.get("description") or p.get("personalization_notes") or ""
+                news_text = ""
+                try:
+                    notes_data = json.loads(comp.get("notes") or "{}")
+                    if isinstance(notes_data, dict) and "recent_news" in notes_data:
+                        news_text = "\n".join(f"- {n}" for n in notes_data["recent_news"])
+                except Exception:
+                    news_text = comp.get("notes") or ""
+
+                stored = (
+                    f"Company: {company}\n"
+                    f"Industry: {industry}\n"
+                    f"Contact: {p.get('first_name', '')} {p.get('last_name', '')} ({p.get('title', '')})\n"
+                    f"Website Description:\n{desc}\n\n"
+                    f"Recent News:\n{news_text}\n"
+                )
+                return stored
+
+    async def save_prospect_research(
+        self, prospect_id: str, summary: str, key_facts: list[str], recent_events: list[str], gaps: list[str]
+    ) -> str:
+        """Save prospect research summary and insights."""
+        rid = _new_id()
+        kf_json = json.dumps(key_facts) if isinstance(key_facts, list) else str(key_facts)
+        re_json = json.dumps(recent_events) if isinstance(recent_events, list) else str(recent_events)
+        gaps_json = json.dumps(gaps) if isinstance(gaps, list) else str(gaps)
+        async with storage.connect(self.db_path) as db:
+            await db.execute(
+                "INSERT INTO prospect_research (id, prospect_id, summary, key_facts, recent_events, gaps) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (rid, prospect_id, summary, kf_json, re_json, gaps_json),
+            )
+            await db.commit()
+        return rid
+
+    async def get_prospect_research(self, prospect_id: str) -> dict | None:
+        """Get latest research for a prospect."""
+        async with storage.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                "SELECT * FROM prospect_research WHERE prospect_id = ? ORDER BY created_at DESC LIMIT 1",
+                (prospect_id,),
+            ) as cur:
+                row = await cur.fetchone()
+                if not row:
+                    return None
+                d = dict(row)
+                for k in ("key_facts", "recent_events", "gaps"):
+                    try:
+                        d[k] = json.loads(d[k]) if d.get(k) else []
+                    except Exception:
+                        d[k] = []
+                return d
+
+    async def save_prospect_signal(
+        self, prospect_id: str, label: str, evidence_quote: str, product_id: str = "", mode: str = "llm", confidence: float = 1.0
+    ) -> str:
+        """Save a buying signal with verbatim evidence quote."""
+        sid = _new_id()
+        async with storage.connect(self.db_path) as db:
+            await db.execute(
+                "INSERT INTO signals (id, prospect_id, product_id, label, code, evidence_quote, description, mode) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (sid, prospect_id, product_id, label, label, evidence_quote, evidence_quote, mode),
+            )
+            await db.commit()
+        return sid
+
+    async def get_prospect_signals(self, prospect_id: str, product_id: str = "") -> list[dict]:
+        """Get signals for a prospect."""
+        async with storage.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            query = "SELECT * FROM signals WHERE prospect_id = ?"
+            params = [prospect_id]
+            if product_id:
+                query += " AND (product_id = ? OR product_id = '' OR product_id IS NULL)"
+                params.append(product_id)
+            query += " ORDER BY created_at DESC"
+            async with db.execute(query, params) as cur:
+                rows = await cur.fetchall()
+                return [dict(r) for r in rows]
+
+    get_signals = get_prospect_signals
+
+    async def save_problem_statement(
+        self,
+        prospect_id: str,
+        product_id: str,
+        problem_statement: str,
+        why_now: str,
+        evidence: list[str] | str,
+        mode: str = "llm",
+    ) -> str:
+        """Save a targeted problem statement for prospect & product."""
+        ps_id = _new_id()
+        ev_json = json.dumps(evidence) if isinstance(evidence, list) else str(evidence)
+        async with storage.connect(self.db_path) as db:
+            await db.execute(
+                "INSERT INTO problem_statements (id, prospect_id, product_id, statement, problem_statement, why_now, evidence, mode) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (ps_id, prospect_id, product_id, problem_statement, problem_statement, why_now, ev_json, mode),
+            )
+            await db.commit()
+        return ps_id
+
+    async def get_problem_statements(self, prospect_id: str = "", product_id: str = "") -> list[dict]:
+        """Get problem statements filtered by prospect_id and/or product_id."""
+        async with storage.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            query = "SELECT * FROM problem_statements WHERE 1=1"
+            params = []
+            if prospect_id:
+                query += " AND prospect_id = ?"
+                params.append(prospect_id)
+            if product_id:
+                query += " AND product_id = ?"
+                params.append(product_id)
+            query += " ORDER BY created_at DESC"
+            async with db.execute(query, params) as cur:
+                rows = await cur.fetchall()
+                res = []
+                for r in rows:
+                    d = dict(r)
+                    if not d.get("problem_statement"):
+                        d["problem_statement"] = d.get("statement", "")
+                    try:
+                        d["evidence"] = json.loads(d["evidence"]) if d.get("evidence") else []
+                    except Exception:
+                        d["evidence"] = [d["evidence"]] if d.get("evidence") else []
+                    res.append(d)
+                return res
+
+    async def get_problem_statement(self, prospect_id: str = "", product_id: str = "") -> Optional[dict]:
+        """Get the latest problem statement for a prospect and product."""
+        stmts = await self.get_problem_statements(prospect_id=prospect_id, product_id=product_id)
+        return stmts[0] if stmts else None
+
+    async def get_cached_embedding(self, text_hash: str, model: str = "all-MiniLM-L6-v2") -> list[float] | None:
+        """Retrieve cached embedding vector from SQLite."""
+        async with storage.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                "SELECT embedding FROM embedding_cache WHERE text_hash = ? AND model = ?",
+                (text_hash, model),
+            ) as cur:
+                row = await cur.fetchone()
+                if row and row["embedding"]:
+                    raw = row["embedding"]
+                    if isinstance(raw, (bytes, bytearray)):
+                        try:
+                            import pickle
+                            return pickle.loads(raw)
+                        except Exception:
+                            raw = raw.decode("utf-8")
+                    if isinstance(raw, str):
+                        try:
+                            return json.loads(raw)
+                        except Exception:
+                            pass
+        return None
+
+    async def set_cached_embedding(self, text_hash: str, embedding: list[float], model: str = "all-MiniLM-L6-v2"):
+        """Save embedding vector to SQLite cache."""
+        import pickle
+        blob = pickle.dumps(embedding)
+        async with storage.connect(self.db_path) as db:
+            await db.execute(
+                "INSERT OR REPLACE INTO embedding_cache (text_hash, embedding, model) VALUES (?, ?, ?)",
+                (text_hash, blob, model),
+            )
+            await db.commit()
+
+    async def save_product_score(
+        self,
+        product_id: str,
+        prospect_id: str,
+        score: int,
+        breakdown: dict,
+        rationale: str,
+        top_reasons: list,
+        main_risk: str,
+        mode: str = "llm",
+    ) -> dict:
+        """Store numeric score and component breakdown per product and prospect."""
+        import uuid
+        score_id = str(uuid.uuid4())
+        breakdown_json = json.dumps(breakdown) if isinstance(breakdown, dict) else str(breakdown)
+        top_reasons_json = json.dumps(top_reasons) if isinstance(top_reasons, list) else str(top_reasons)
+        async with storage.connect(self.db_path) as db:
+            await db.execute(
+                "DELETE FROM scores WHERE product_id = ? AND prospect_id = ?",
+                (product_id, prospect_id),
+            )
+            await db.execute(
+                """
+                INSERT INTO scores (
+                    id, product_id, prospect_id, score, breakdown,
+                    reasoning, rationale, top_reasons, main_risk, mode
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    score_id, product_id, prospect_id, int(score), breakdown_json,
+                    rationale, rationale, top_reasons_json, main_risk, mode
+                ),
+            )
+            await db.commit()
+        return {
+            "id": score_id,
+            "product_id": product_id,
+            "prospect_id": prospect_id,
+            "score": int(score),
+            "breakdown": breakdown,
+            "rationale": rationale,
+            "top_reasons": top_reasons,
+            "main_risk": main_risk,
+            "mode": mode,
+        }
+
+    async def get_scores_by_product(self, product_id: str) -> list[dict]:
+        """Fetch ranked prospects for a given product."""
+        async with storage.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                """
+                SELECT s.*, p.company, TRIM(p.first_name || ' ' || p.last_name) AS contact_name, p.title, p.industry, p.company_size AS size
+                FROM scores s
+                LEFT JOIN prospects p ON s.prospect_id = p.id
+                WHERE s.product_id = ?
+                ORDER BY s.score DESC
+                """,
+                (product_id,),
+            ) as cur:
+                rows = await cur.fetchall()
+                out = []
+                for r in rows:
+                    d = dict(r)
+                    try:
+                        d["breakdown"] = json.loads(d.get("breakdown") or "{}")
+                    except Exception:
+                        d["breakdown"] = {}
+                    try:
+                        d["top_reasons"] = json.loads(d.get("top_reasons") or "[]")
+                    except Exception:
+                        d["top_reasons"] = []
+                    out.append(d)
+                return out
+
+    async def save_email_draft(
+        self,
+        product_id: str,
+        prospect_id: str,
+        subject: str,
+        body: str,
+        model: str = "",
+        mode: str = "llm",
+        status: str = "draft",
+    ) -> dict:
+        """Store validated email draft."""
+        import uuid
+        draft_id = str(uuid.uuid4())
+        async with storage.connect(self.db_path) as db:
+            await db.execute(
+                """
+                INSERT INTO emails (
+                    id, product_id, prospect_id, subject, body, step, model, mode, status
+                ) VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?)
+                """,
+                (draft_id, product_id, prospect_id, subject, body, model, mode, status),
+            )
+            await db.commit()
+        return {
+            "id": draft_id,
+            "product_id": product_id,
+            "prospect_id": prospect_id,
+            "subject": subject,
+            "body": body,
+            "model": model,
+            "mode": mode,
+            "status": status,
+        }
+
+    async def get_email_drafts(self, product_id: Optional[str] = None) -> list[dict]:
+        """Fetch email drafts optionally filtered by product."""
+        async with storage.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            if product_id:
+                query = """
+                    SELECT e.*, p.company, TRIM(p.first_name || ' ' || p.last_name) AS contact_name, p.title, p.email as contact_email
+                    FROM emails e
+                    LEFT JOIN prospects p ON e.prospect_id = p.id
+                    WHERE e.product_id = ?
+                    ORDER BY e.created_at DESC
+                """
+                params = (product_id,)
+            else:
+                query = """
+                    SELECT e.*, p.company, TRIM(p.first_name || ' ' || p.last_name) AS contact_name, p.title, p.email as contact_email,
+                           prod.name as product_name
+                    FROM emails e
+                    LEFT JOIN prospects p ON e.prospect_id = p.id
+                    LEFT JOIN products prod ON e.product_id = prod.id
+                    ORDER BY e.created_at DESC
+                """
+                params = ()
+            async with db.execute(query, params) as cur:
+                rows = await cur.fetchall()
+                return [dict(r) for r in rows]
+
+    async def save_reply_classification(
+        self,
+        prospect_id: str,
+        thread_text: str,
+        label: str,
+        confidence: float,
+        reasoning: str,
+        suggested_next_action: str,
+        mode: str = "llm",
+        conversation_id: Optional[str] = None,
+    ) -> dict:
+        """Save classified reply into conversations table."""
+        import uuid
+        cid = conversation_id or str(uuid.uuid4())
+        thread_json = json.dumps([{"role": "prospect", "content": thread_text}])
+        async with storage.connect(self.db_path) as db:
+            async with db.execute("SELECT id FROM conversations WHERE id = ?", (cid,)) as cur:
+                existing = await cur.fetchone()
+            if existing:
+                await db.execute(
+                    """
+                    UPDATE conversations
+                    SET label = ?, confidence = ?, reasoning = ?,
+                        suggested_next_action = ?, mode = ?, updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                    """,
+                    (label, float(confidence), reasoning, suggested_next_action, mode, cid),
+                )
+            else:
+                await db.execute(
+                    """
+                    INSERT INTO conversations (
+                        id, prospect_id, channel, thread_json, intent, label,
+                        confidence, reasoning, suggested_next_action, mode
+                    ) VALUES (?, ?, 'email', ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (cid, prospect_id, thread_json, label, label, float(confidence), reasoning, suggested_next_action, mode),
+                )
+            await db.commit()
+        return {
+            "id": cid,
+            "prospect_id": prospect_id,
+            "label": label,
+            "confidence": float(confidence),
+            "reasoning": reasoning,
+            "suggested_next_action": suggested_next_action,
+            "mode": mode,
+        }
+
+    async def get_classified_conversations(self) -> list[dict]:
+        """Fetch conversations with classifications for the Conversations dashboard."""
+        async with storage.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                """
+                SELECT c.*, p.company, p.contact_name, p.email as contact_email
+                FROM conversations c
+                LEFT JOIN prospects p ON c.prospect_id = p.id
+                ORDER BY c.updated_at DESC
+                """
+            ) as cur:
+                rows = await cur.fetchall()
+                out = []
+                for r in rows:
+                    d = dict(r)
+                    try:
+                        d["thread"] = json.loads(d.get("thread_json") or "[]")
+                    except Exception:
+                        d["thread"] = []
+                    out.append(d)
+                return out
 
 

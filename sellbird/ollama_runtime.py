@@ -91,6 +91,7 @@ class OllamaClient:
         self.base_url = validate_local_host(base_url)
         self.host = urllib.parse.urlparse(self.base_url).hostname or "localhost"
         self.model = model.strip() or DEFAULT_MODEL
+        self.last_model = self.model
         self.num_ctx = int(num_ctx) if num_ctx else DEFAULT_NUM_CTX
         self.db_path = Path(db_path) if db_path is not None else DB_PATH
         self._db_initialized = False
@@ -118,6 +119,7 @@ class OllamaClient:
         output_tokens: int,
         latency_ms: int,
         status: str,
+        model: str | None = None,
     ):
         """Record an inference call in the SQLite inference_log table."""
         await self._ensure_log_table()
@@ -125,6 +127,7 @@ class OllamaClient:
 
         agent = (agent or "").strip() or "brain"
         task = (task or "").strip() or "chat"
+        log_model = (model or self.last_model or self.model).strip()
         ts = datetime.now(timezone.utc).isoformat()
         try:
             async with aiosqlite.connect(self.db_path) as db:
@@ -139,7 +142,7 @@ class OllamaClient:
                         ts,
                         agent,
                         task,
-                        self.model,
+                        log_model,
                         self.host,
                         prompt_tokens,
                         output_tokens,
@@ -210,6 +213,7 @@ class OllamaClient:
         task: str = "",
         expect_json: bool = False,
         timeout: float = DEFAULT_TIMEOUT_SECONDS,
+        num_predict: int | None = None,
     ) -> str:
         """Send chat prompt to Ollama /api/chat and return cleaned response string."""
         agent = (agent or "").strip()
@@ -231,6 +235,8 @@ class OllamaClient:
                 "num_ctx": self.num_ctx,
             },
         }
+        if num_predict is not None:
+            payload["options"]["num_predict"] = num_predict
         if expect_json:
             payload["format"] = "json"
 
@@ -292,6 +298,8 @@ class OllamaClient:
         cleaned_text = strip_think_blocks(raw_text)
 
         status = "ok"
+        resp_model = data.get("model") or self.model
+        self.last_model = resp_model
         await self.log_inference(
             agent=agent,
             task=task or (session_id or ""),
@@ -299,6 +307,7 @@ class OllamaClient:
             output_tokens=output_tokens,
             latency_ms=latency_ms,
             status=status,
+            model=resp_model,
         )
 
         return cleaned_text

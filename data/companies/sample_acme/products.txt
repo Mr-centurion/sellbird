@@ -1,0 +1,23 @@
+SAMPLE DATA: Acme Product Suite
+
+Acme offers two distinct, purpose-built SaaS products:
+
+Product 1: Acme Flow
+- Overview: Intelligent workflow and process orchestration engine for operations and supply chain teams.
+- Description: Acme Flow automates repetitive logistics tasks, vendor order sync, and inventory discrepancy routing across ERP and CRM systems without custom code.
+- Target Audience: VP of Operations, Director of Supply Chain, Head of Logistics, Chief Operating Officer at mid-market firms (50-500 employees).
+- Key Benefits:
+  * Reduces manual order processing time by 75%
+  * Automated error handling with cross-system syncing
+  * Pre-built integrations with major ERPs and warehouse management software
+- Value Proposition: End-to-end supply chain operational automation in days, not months.
+
+Product 2: Acme Pulse
+- Overview: Continuous engineering velocity and reliability telemetry platform.
+- Description: Acme Pulse tracks deployment frequency, PR cycle time, test flakiness, and incident response metrics directly from GitHub, GitLab, and Jira.
+- Target Audience: VP of Engineering, Chief Technology Officer, Director of Engineering, Head of DevOps at tech startups and scale-ups (20-250 engineers).
+- Key Benefits:
+  * Real-time DORA metrics dashboards and sprint health analytics
+  * Proactive alerts on review bottlenecks and test regressions
+  * Secure, local-agent data processing with zero code storage
+- Value Proposition: Crystal-clear engineering velocity insights without intrusive developer tracking.

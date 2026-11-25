@@ -2,6 +2,7 @@
 
 import argparse
 import asyncio
+import json
 import subprocess
 import sys
 import textwrap
@@ -137,16 +138,12 @@ def cmd_run(args):
 
 
 def cmd_train(args):
-    """Train Sellbird on a website."""
+    """Train Sellbird on a website or local folder."""
+    from pathlib import Path
     from sellbird.trainer import Trainer
 
-    url = args.url.strip()
-    if not url.startswith(("http://", "https://")):
-        url = f"https://{url}"
-        print(f"  No scheme given — using {url}")
-
-    if args.max_pages < 1:
-        print("  max_pages must be at least 1.")
+    if not getattr(args, "from_folder", None) and not getattr(args, "url", None):
+        print("  ERROR: Must provide either a website URL or --from-folder <path>.")
         sys.exit(2)
 
     from pydantic import ValidationError
@@ -172,6 +169,26 @@ def cmd_train(args):
         sys.exit(2)
 
     trainer = Trainer(brain_config=brain_config)
+
+    if getattr(args, "from_folder", None):
+        folder_path = Path(args.from_folder).expanduser()
+        if not folder_path.is_absolute():
+            folder_path = Path.cwd() / folder_path
+        if not folder_path.exists() or not folder_path.is_dir():
+            print(f"  ERROR: Folder '{args.from_folder}' does not exist or is not a directory.")
+            sys.exit(2)
+        asyncio.run(trainer.train_from_folder(str(folder_path)))
+        return
+
+    url = (args.url or "").strip()
+    if not url.startswith(("http://", "https://")):
+        url = f"https://{url}"
+        print(f"  No scheme given — using {url}")
+
+    if args.max_pages < 1:
+        print("  max_pages must be at least 1.")
+        sys.exit(2)
+
     asyncio.run(trainer.train(url, max_pages=args.max_pages))
 
 
@@ -857,6 +874,109 @@ def cmd_suppressions(args):
         sys.exit(code)
 
 
+def cmd_import_prospects(args):
+    """Import prospects from a JSON file into the DB as raw stored data."""
+    from sellbird.state import StateManager
+
+    async def _run():
+        state = StateManager()
+        await state.init_db()
+        count = await state.import_prospects_from_file(args.file)
+        print(f"Imported {count} prospects into database from {args.file}.")
+
+    asyncio.run(_run())
+
+
+def cmd_eval_replies(args):
+    """Evaluate reply classification accuracy against expected labels for both LLM and heuristic paths."""
+    from pathlib import Path
+    from sellbird.brain import Brain
+    from sellbird.config import BrainConfig, load_config
+    from sellbird.paths import PROJECT_ROOT
+    from sellbird.reply_classifier import classify_reply, classify_reply_heuristic
+    from sellbird.state import StateManager
+
+    async def _run():
+        threads_path = Path(args.threads) if args.threads else (PROJECT_ROOT / "data" / "replies" / "sample_threads.json")
+        if not threads_path.exists():
+            print(f"Error: Threads file not found at {threads_path}", file=sys.stderr)
+            return 1
+
+        with open(threads_path, encoding="utf-8") as f:
+            threads = json.load(f)
+
+        state = StateManager()
+        await state.init_db()
+
+        try:
+            cfg = load_config()
+            brain_cfg = cfg.brain
+        except Exception:
+            brain_cfg = BrainConfig()
+
+        if getattr(args, "model", None):
+            brain_cfg.model = args.model
+
+        brain = Brain(state, brain_cfg)
+        try:
+            if not await brain.ollama.is_reachable():
+                brain.unavailable = "Ollama is unreachable"
+        except Exception:
+            brain.unavailable = "Ollama is unreachable"
+
+        print("=" * 76)
+        print("  SELLBIRD REPLY CLASSIFICATION EVALUATION")
+        print("=" * 76)
+        print(f"Threads file : {threads_path}")
+        print(f"Total threads: {len(threads)}")
+        print(f"LLM Model    : {brain.model} ({brain_cfg.ollama_url})")
+        print("-" * 76)
+        print(f"{'ID':<10} {'EXPECTED':<15} {'HEURISTIC':<15} {'LLM':<15} {'MATCH (H/L)'}")
+        print("-" * 76)
+
+        heur_correct = 0
+        llm_correct = 0
+
+        for t in threads:
+            tid = t.get("id", "thread")
+            expected = t.get("expected_label", "").lower().strip()
+            reply_text = t.get("reply_text", "")
+
+            # 1. Heuristic path
+            res_h = classify_reply_heuristic(reply_text)
+            pred_h = res_h["label"].lower().strip()
+            match_h = (pred_h == expected)
+            if match_h:
+                heur_correct += 1
+
+            # 2. LLM path
+            res_l = await classify_reply(reply_text, brain=brain)
+            pred_l = res_l["label"].lower().strip()
+            match_l = (pred_l == expected)
+            if match_l:
+                llm_correct += 1
+
+            status_str = f"{'PASS' if match_h else 'FAIL'} / {'PASS' if match_l else 'FAIL'}"
+            print(f"{tid:<10} {expected:<15} {pred_h:<15} {pred_l:<15} {status_str}")
+
+        total = len(threads)
+        acc_h = (heur_correct / total * 100.0) if total else 0.0
+        acc_l = (llm_correct / total * 100.0) if total else 0.0
+
+        print("=" * 76)
+        print("  EVALUATION RESULTS SUMMARY")
+        print("=" * 76)
+        print(f"Total Sample Threads Evaluated : {total}")
+        print(f"Heuristic Path Accuracy        : {heur_correct}/{total} ({acc_h:.1f}%)")
+        print(f"LLM Model Path Accuracy        : {llm_correct}/{total} ({acc_l:.1f}%)")
+        print("=" * 76)
+        return 0
+
+    code = asyncio.run(_run())
+    if code:
+        sys.exit(code)
+
+
 def main():
     from sellbird.textio import utf8_stdio
     utf8_stdio()
@@ -881,9 +1001,15 @@ def main():
     sub = subparsers.add_parser("run", help="Start Sellbird's heartbeat loop")
     sub.set_defaults(func=cmd_run)
 
-    # sellbird train <url>
-    sub = subparsers.add_parser("train", help="Train Sellbird on a website")
-    sub.add_argument("url", help="Website URL to crawl and learn from")
+    # sellbird train <url> or --from-folder <path>
+    sub = subparsers.add_parser("train", help="Train Sellbird on a website or local folder")
+    sub.add_argument("url", nargs="?", default=None, help="Website URL to crawl and learn from")
+    sub.add_argument(
+        "--from-folder",
+        dest="from_folder",
+        default=None,
+        help="Local folder containing .md/.txt files to learn from",
+    )
     sub.add_argument(
         "max_pages",
         nargs="?",
@@ -1031,6 +1157,17 @@ def main():
     sub.add_argument("suppression_action", nargs="?", default="list", choices=["list", "add", "remove"])
     sub.add_argument("value", nargs="?", default="", help="add: an address or domain; remove: its id")
     sub.set_defaults(func=cmd_suppressions)
+
+    # sellbird import-prospects <file>
+    sub = subparsers.add_parser("import-prospects", help="Import sample prospects from JSON file")
+    sub.add_argument("file", help="Path to JSON file containing sample prospects")
+    sub.set_defaults(func=cmd_import_prospects)
+
+    # sellbird eval-replies [--threads FILE]
+    sub = subparsers.add_parser("eval-replies", help="Evaluate reply classification accuracy against sample threads")
+    sub.add_argument("--threads", help="Path to sample threads JSON file (default: data/replies/sample_threads.json)")
+    sub.add_argument("--model", help="Optional model name override")
+    sub.set_defaults(func=cmd_eval_replies)
 
     # Commands that installed extensions add (sellbird.extensions). A name the
     # built-in CLI already uses is refused, so an extension never hides one.

@@ -3,7 +3,10 @@
 *.env
 
 # Data
-data/
+data/*
+!data/companies/
+!data/prospects/
+!data/replies/
 *.db
 
 # Python

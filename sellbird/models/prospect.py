@@ -2,7 +2,7 @@
 
 from datetime import datetime, timezone
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 # Source tag for a prospect that is a company's general inbox, not a person.
@@ -15,6 +15,8 @@ def _utcnow() -> datetime:
 
 
 class Prospect(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
     id: str = ""
     company_id: str = ""       # FK to companies table
     first_name: str = ""       # required for a valid contact
@@ -38,10 +40,22 @@ class Prospect(BaseModel):
     timezone: str = ""
     # legacy fields kept for backwards compat with existing code
     company: str = ""
+    contact_name: str = ""
     industry: str = ""
     company_size: str = ""
+    size: str = ""
+    stored_text: str = ""
     created_at: datetime = Field(default_factory=_utcnow)
     updated_at: datetime = Field(default_factory=_utcnow)
+
+    def __getitem__(self, item: str):
+        return getattr(self, item)
+
+    def get(self, item: str, default=None):
+        return getattr(self, item, default)
+
+    def __contains__(self, item: str) -> bool:
+        return hasattr(self, item)
 
     @field_validator("email")
     @classmethod

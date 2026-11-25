@@ -65,7 +65,7 @@ def test_cloud_ai_used_computed(isolated_client):
         conn.execute(
             "INSERT INTO inference_log (ts, agent, task, model, host, prompt_tokens, output_tokens, latency_ms, status) "
             "VALUES (?, ?, ?, ?, ?, 10, 10, 50, 'ok')",
-            ("2026-11-24T12:02:00", "trainer", "icp", "qwen3:1.7b", "api.openai.com"),
+            ("2026-11-24T12:02:00", "trainer", "icp", "qwen3:1.7b", "api.external-cloud.com"),
         )
 
     res = isolated_client.get("/api/inference")

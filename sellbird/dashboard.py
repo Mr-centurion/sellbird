@@ -557,6 +557,137 @@ async def save_company_route(request: Request):
     return {"success": True, "message": "Saved. New emails use it from the next draft."}
 
 
+@app.get("/api/products")
+async def get_products():
+    """List all products in the database or fallback to sellbird.yaml."""
+    state = _state()
+    await state.init_db()
+    products = await state.list_products()
+    return products
+
+
+@app.post("/api/products")
+async def create_product(request: Request):
+    """Add a new product or update an existing one."""
+    body = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
+    name = str((body or {}).get("name") or "").strip()
+    if not name:
+        return JSONResponse({"error": "Product name is required."}, status_code=400)
+    description = str((body or {}).get("description") or "").strip()
+    value_props = str((body or {}).get("value_props") or "").strip()
+    status = str((body or {}).get("status") or "active").strip()
+    product_id = (body or {}).get("id") or None
+    state = _state()
+    await state.init_db()
+    product = await state.add_product(
+        name=name,
+        description=description,
+        value_props=value_props,
+        status=status,
+        product_id=product_id,
+    )
+    return product
+
+
+@app.post("/api/products/{id}/icp")
+async def generate_product_icp(id: str):
+    """Generate an Ideal Customer Profile (ICP) for a specific product."""
+    state = _state()
+    await state.init_db()
+    product = await state.get_product(id)
+    if not product:
+        return JSONResponse({"error": f"Product '{id}' not found."}, status_code=404)
+
+    from sellbird.trainer import Trainer
+    from sellbird.config import load_config
+    cfg = load_config()
+    trainer = Trainer(brain_config=cfg.brain)
+    trainer.state = state
+
+    # Run ICP extraction for this product
+    icp_data = await trainer.generate_icp_for_product(product)
+    model = getattr(cfg.brain, "model", "qwen3:1.7b")
+    saved = await state.save_icp(product_id=id, icp_data=icp_data, model=model)
+    return {
+        "product_id": id,
+        "model": model,
+        "icp": icp_data,
+        "saved": saved,
+    }
+
+
+@app.get("/api/products/{id}/icp")
+async def get_product_icp(id: str):
+    """Get the Ideal Customer Profile (ICP) for a specific product."""
+    state = _state()
+    await state.init_db()
+    icp = await state.get_icp(id)
+    if not icp:
+        return JSONResponse({"error": f"No ICP found for product '{id}'."}, status_code=404)
+    return icp
+
+
+@app.get("/api/products/{id}/scores")
+async def get_product_scores(id: str):
+    """Get ranked prospects with score, breakdown, and rationale for a product."""
+    state = _state()
+    await state.init_db()
+    scores = await state.get_scores_by_product(id)
+    return scores
+
+
+@app.post("/api/products/{id}/score")
+async def score_product_prospects(id: str):
+    """Score all prospects for a specific product."""
+    state = _state()
+    await state.init_db()
+    from sellbird.scoring import score_prospect_for_product
+    from sellbird.brain import Brain
+    from sellbird.config import load_config
+    cfg = load_config()
+    brain = Brain(state, cfg.brain)
+    prospects = await state.get_prospects(limit=50)
+    scored = []
+    for p in prospects:
+        try:
+            s = await score_prospect_for_product(p.id, id, state=state, brain=brain)
+            scored.append(s)
+        except Exception as e:
+            logger.warning(f"Error scoring prospect {p.id} for product {id}: {e}")
+    return {"product_id": id, "count": len(scored), "scores": scored}
+
+
+@app.get("/api/emails")
+async def get_emails_endpoint(product_id: str | None = None):
+    """List email drafts optionally filtered by product."""
+    state = _state()
+    await state.init_db()
+    drafts = await state.get_email_drafts(product_id=product_id)
+    return drafts
+
+
+@app.post("/api/products/{id}/draft-emails")
+async def draft_product_emails(id: str):
+    """Generate validated email drafts for prospects under a product."""
+    state = _state()
+    await state.init_db()
+    from sellbird.email_drafter import draft_validated_email
+    from sellbird.brain import Brain
+    from sellbird.config import load_config
+    cfg = load_config()
+    brain = Brain(state, cfg.brain)
+    prospects = await state.get_prospects(limit=10)
+    drafts = []
+    for p in prospects:
+        try:
+            d = await draft_validated_email(p.id, id, state=state, brain=brain)
+            if d:
+                drafts.append(d)
+        except Exception as e:
+            logger.warning(f"Error drafting email for prospect {p.id}: {e}")
+    return {"product_id": id, "count": len(drafts), "drafts": drafts}
+
+
 @app.post("/api/offer/propose")
 async def propose_offer(request: Request):
     """Your agent's proposed offer, waiting for you to use or dismiss it on
@@ -1043,14 +1174,8 @@ async def get_stats():
         actions = await query_db("SELECT COUNT(*) as count FROM actions")
         action_count = actions[0]["count"] if actions else 0
 
-        # usage_log rows are keyed by the LOCAL date (increment_usage /
-        # get_usage_today use date.today()); SQLite's date('now') is UTC and
-        # can select a different day's counts on either side of UTC midnight.
-        inf = await query_db(
-            "SELECT COUNT(*) as count FROM inference_log WHERE date(ts) = ?",
-            (date.today().isoformat(),),
-        )
-        usage_today = (inf[0]["count"] or 0) if inf else 0
+        state = _state()
+        usage_today = await state.get_usage_today()
 
         return {
             "prospects": {"total": prospect_total, "by_status": prospect_map},
@@ -1173,6 +1298,118 @@ async def get_prospects():
     return rows
 
 
+@app.post("/api/prospects/import-sample")
+async def import_sample_prospects_endpoint(req: Request):
+    """Import sample prospects from data/prospects/sample_prospects.json into the DB."""
+    from sellbird.paths import PROJECT_ROOT
+    state = _state()
+    sample_file = PROJECT_ROOT / "data" / "prospects" / "sample_prospects.json"
+    try:
+        body = await req.json()
+    except Exception:
+        body = {}
+    if body.get("file"):
+        sample_file = Path(body["file"])
+
+    if not sample_file.exists():
+        return JSONResponse({"status": "error", "message": f"File {sample_file} not found"}, status_code=404)
+
+    count = await state.import_prospects_from_file(sample_file)
+    return {"status": "ok", "imported": count, "file": str(sample_file)}
+
+
+@app.get("/api/prospects/{prospect_id}/research")
+async def get_prospect_research_endpoint(prospect_id: str):
+    """Get research summary and insights for a prospect."""
+    state = _state()
+    res = await state.get_prospect_research(prospect_id)
+    if not res:
+        stored_text = await state.get_prospect_stored_text(prospect_id)
+        return {
+            "prospect_id": prospect_id,
+            "summary": "",
+            "key_facts": [],
+            "recent_events": [],
+            "gaps": [],
+            "has_stored_text": bool(stored_text),
+        }
+    return res
+
+
+@app.post("/api/prospects/{prospect_id}/research")
+async def generate_prospect_research_endpoint(prospect_id: str):
+    """Generate research summary for a prospect using stored text."""
+    from sellbird.stored_research import build_research_summary
+    state = _state()
+    prospect = await state.get_prospect(prospect_id)
+    if not prospect:
+        return JSONResponse({"error": f"Prospect {prospect_id} not found"}, status_code=404)
+    try:
+        res = await build_research_summary(prospect_id, state=state)
+        return res
+    except Exception as e:
+        logger.error("Failed to build research for %s: %s", prospect_id, e)
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.get("/api/prospects/{prospect_id}/signals")
+async def get_prospect_signals_endpoint(prospect_id: str, product_id: str = ""):
+    """Get buying signals for a prospect."""
+    state = _state()
+    signals = await state.get_prospect_signals(prospect_id, product_id=product_id)
+    return signals
+
+
+@app.post("/api/prospects/{prospect_id}/signals")
+async def classify_prospect_signals_endpoint(prospect_id: str, req: Request):
+    """Classify buying signals for a prospect from stored text."""
+    from sellbird.buying_signals import classify_buying_signals
+    state = _state()
+    prospect = await state.get_prospect(prospect_id)
+    if not prospect:
+        return JSONResponse({"error": f"Prospect {prospect_id} not found"}, status_code=404)
+    try:
+        body = await req.json()
+    except Exception:
+        body = {}
+    product_id = body.get("product_id", "")
+    try:
+        signals = await classify_buying_signals(prospect_id, state=state, product_id=product_id)
+        return signals
+    except Exception as e:
+        logger.error("Failed to classify signals for %s: %s", prospect_id, e)
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.get("/api/prospects/{prospect_id}/problem-statements")
+async def get_prospect_problem_statements_endpoint(prospect_id: str, product_id: str = ""):
+    """Get problem statements for a prospect."""
+    state = _state()
+    ps = await state.get_problem_statements(prospect_id=prospect_id, product_id=product_id)
+    return ps
+
+
+@app.post("/api/prospects/{prospect_id}/problem-statements")
+async def generate_prospect_problem_statement_endpoint(prospect_id: str, req: Request):
+    """Generate problem statement and why_now rationale for prospect and product."""
+    from sellbird.problem_statement import generate_problem_statement
+    state = _state()
+    prospect = await state.get_prospect(prospect_id)
+    if not prospect:
+        return JSONResponse({"error": f"Prospect {prospect_id} not found"}, status_code=404)
+    try:
+        body = await req.json()
+    except Exception:
+        body = {}
+    product_id = body.get("product_id") or "default"
+    try:
+        ps = await generate_problem_statement(prospect_id, product_id=product_id, state=state)
+        return ps
+    except Exception as e:
+        logger.error("Failed to generate problem statement for %s: %s", prospect_id, e)
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
 def _state():
     from sellbird.state import StateManager
     return StateManager(db_path=str(DB_PATH))
@@ -1282,6 +1519,7 @@ async def get_outbox_api():
             "failed": (await query_db(
                 "SELECT * FROM outbox WHERE status IN ('failed','rejected','cancelled') "
                 "ORDER BY updated_at DESC LIMIT 25")),
+            "drafts": await state.get_email_drafts(),
         }
     except Exception as e:
         return {"error": str(e)}
