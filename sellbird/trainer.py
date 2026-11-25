@@ -33,7 +33,7 @@ from sellbird.untrusted import UNTRUSTED_RULE, fence
 
 
 def _normalize_start_url(url: str) -> str:
-    """Accept 'acmecorp.com' as well as 'https://acmecorp.com'."""
+    """Accept 'example.com' as well as 'https://example.com'."""
     url = url.strip()
     if url and not urlparse(url).scheme:
         url = f"https://{url}"
@@ -303,13 +303,29 @@ FallbackCrawler = WebCrawler
 
 
 class Trainer:
-    def __init__(self, brain_config: BrainConfig | None = None):
+    def __init__(
+        self,
+        brain_config: BrainConfig | None = None,
+        state: StateManager | None = None,
+    ):
         # Without an explicit choice, train with whatever provider the
         # existing config selects (Ollama when none does).
         self.brain_config = brain_config or load_brain_config()
-        self.state = StateManager()
-        self.brain = Brain(self.state, self.brain_config)
+        self._state = state or StateManager()
+        self.brain = Brain(self._state, self.brain_config)
+        self.source_name: str = ""
+        self.source_folder: str = ""
         self.scraped_pages: dict[str, str] = {}
+
+    @property
+    def state(self) -> StateManager:
+        return self._state
+
+    @state.setter
+    def state(self, value: StateManager) -> None:
+        self._state = value
+        if hasattr(self, "brain") and self.brain is not None:
+            self.brain.state = value
 
     async def train(
         self,
@@ -334,6 +350,7 @@ class Trainer:
             print(f"\nERROR: '{url}' doesn't look like a valid URL.")
             print("Try something like: https://yourcompany.com")
             return None
+        self.source_name = domain.split(".")[0].replace("-", " ").replace("_", " ").title()
         base_url = f"{parsed.scheme}://{domain}"
 
         logger.info(f"Training Sellbird on {base_url}...")
@@ -375,6 +392,9 @@ class Trainer:
         if not p.exists() or not p.is_dir():
             print(f"\nERROR: '{folder_path}' is not a valid directory.")
             return None
+
+        self.source_folder = str(p)
+        self.source_name = p.name.replace("sample_", "").replace("-", " ").replace("_", " ").title()
 
         print(f"\n{'='*60}")
         print(f"  Sellbird Training Mode (Folder Loader)")
@@ -538,6 +558,105 @@ class Trainer:
                 break
         return fence(all_content, "your website")
 
+    def _extract_company_name_deterministic(self) -> str:
+        """Extract company name from folder, domain, or stored text headers."""
+        if getattr(self, "source_name", None):
+            return self.source_name
+
+        # Check scraped pages keys (domains or folder paths)
+        for key in self.scraped_pages.keys():
+            if "://" in key:
+                parsed = urlparse(key)
+                host = parsed.hostname or ""
+                host = re.sub(r"^www\.", "", host)
+                name = host.split(".")[0]
+                if name and name not in ("localhost", "127"):
+                    return name.replace("-", " ").replace("_", " ").title()
+            elif "/" in key or "\\" in key or key.endswith((".txt", ".md", ".html")):
+                p = Path(key)
+                if p.parent and p.parent.name and p.parent.name not in (".", "companies"):
+                    name = p.parent.name.replace("sample_", "").replace("-", " ").replace("_", " ").title()
+                    if name:
+                        return name
+
+        # Look in stored text for Company Overview or About headings
+        all_raw = " ".join(self.scraped_pages.values())
+        m = re.search(r"(?:SAMPLE DATA:\s*)?(?:About\s+)([A-Za-z0-9&.,' -]{2,50}?)(?:\n|\.|$)", all_raw)
+        if m:
+            candidate = m.group(1).strip().rstrip(".,")
+            if candidate and not any(w in candidate.lower() for w in ("our product", "our pricing", "overview", "us", "website")):
+                return candidate
+
+        m2 = re.search(r"(?:About|Company(?:\s+Overview)?):\s*([A-Za-z0-9&.,' -]{2,50}?)(?:\n|\.|$)", all_raw)
+        if m2:
+            candidate = m2.group(1).strip().rstrip(".,")
+            if candidate and not any(w in candidate.lower() for w in ("our product", "our pricing", "overview", "us", "website")):
+                return candidate
+
+        return "Business"
+
+    def _extract_products_deterministic(self, all_content: str, company_name: str) -> list[dict]:
+        """Extract products from markdown headings or 'Product:' lines in stored text."""
+        products = []
+        seen_names = set()
+
+        # Pattern 1: Lines like "Product 1: Name" or "Product: Name"
+        matches = list(re.finditer(r"(?im)^Product(?:\s+\d+)?:?\s*([A-Za-z0-9][A-Za-z0-9 &.,'/-]{1,60})$", all_content))
+        if matches:
+            for i, m in enumerate(matches):
+                clean = m.group(1).strip().rstrip(":-")
+                clean_lower = clean.lower()
+                if clean and clean_lower not in seen_names and not any(w in clean_lower for w in ("catalog", "overview", "specification", "feature", "pricing")):
+                    seen_names.add(clean_lower)
+                    start_pos = m.start()
+                    end_pos = matches[i + 1].start() if i + 1 < len(matches) else len(all_content)
+                    block = all_content[start_pos:end_pos]
+
+                    desc_m = re.search(r"(?:Description|Overview):\s*([^\n]+)", block, re.IGNORECASE)
+                    desc = desc_m.group(1).strip() if desc_m else f"{clean} by {company_name}. (non-LLM mode)"
+
+                    vp_m = re.search(r"(?:Value Proposition):\s*([^\n]+)", block, re.IGNORECASE)
+                    vp = vp_m.group(1).strip() if vp_m else f"Streamline operations with {clean}. (non-LLM mode)"
+
+                    products.append({
+                        "name": clean,
+                        "description": desc,
+                        "value_props": vp,
+                        "pricing": "Contact for pricing",
+                    })
+
+        # Pattern 2: Markdown headings like "## Product Name" if no products found yet
+        if not products:
+            h_matches = list(re.finditer(r"(?im)^#{1,3}\s+([A-Za-z0-9][A-Za-z0-9 &.,'/-]{1,50})$", all_content))
+            for i, hm in enumerate(h_matches):
+                clean = hm.group(1).strip().rstrip(":-")
+                clean_lower = clean.lower()
+                if clean and clean_lower not in seen_names and not any(
+                    w in clean_lower for w in (
+                        "about", "overview", "pricing", "feature", "capability",
+                        "contact", "faq", "terms", "privacy", "sample data", "company",
+                    )
+                ):
+                    seen_names.add(clean_lower)
+                    start_pos = hm.start()
+                    end_pos = h_matches[i + 1].start() if i + 1 < len(h_matches) else len(all_content)
+                    block = all_content[start_pos:end_pos]
+
+                    desc_m = re.search(r"(?:Description|Overview):\s*([^\n]+)", block, re.IGNORECASE)
+                    desc = desc_m.group(1).strip() if desc_m else f"{clean} by {company_name}. (non-LLM mode)"
+
+                    vp_m = re.search(r"(?:Value Proposition):\s*([^\n]+)", block, re.IGNORECASE)
+                    vp = vp_m.group(1).strip() if vp_m else f"Streamline operations with {clean}. (non-LLM mode)"
+
+                    products.append({
+                        "name": clean,
+                        "description": desc,
+                        "value_props": vp,
+                        "pricing": "Contact for pricing",
+                    })
+
+        return products
+
     async def _extract_product_info(self) -> dict:
         """Ask the model to extract product information from all crawled content."""
         all_content = self._get_all_content()
@@ -582,44 +701,42 @@ Be thorough — you have access to the full website. Extract everything relevant
             prompt, session_id="sellbird-trainer", agent="trainer", task="extract_product_info"
         )
         if not isinstance(result, dict) or not result:
-            all_txt = self._get_all_content().lower()
-            if "acme flow" in all_txt and "acme pulse" in all_txt:
-                return {
-                    "company_name": "Acme Technologies",
-                    "product_name": "Acme Flow",
-                    "product_description": "Workflow automation and engineering analytics software for mid-market teams.",
-                    "pricing": "Starting at $499/mo",
-                    "key_benefits": ["Process automation", "Cross-system sync", "Engineering velocity tracking"],
-                    "features": ["Workflow engine", "Engineering telemetry", "ERP integrations"],
-                    "target_audience": "Operations leaders and Engineering executives",
-                    "value_proposition": "Eliminate operational bottlenecks and accelerate delivery.",
-                    "products": [
-                        {
-                            "name": "Acme Flow",
-                            "description": "Intelligent workflow automation and ERP orchestration for operations & logistics.",
-                            "value_props": "Reduces manual order processing time by 75% with automated error handling.",
-                            "pricing": "Starter $499/mo, Growth $1,499/mo, Enterprise $3,500/mo",
-                        },
-                        {
-                            "name": "Acme Pulse",
-                            "description": "Continuous engineering velocity and reliability telemetry platform.",
-                            "value_props": "Real-time DORA metrics dashboards and sprint health analytics with zero code storage.",
-                            "pricing": "Team $15/dev/mo, Org $35/dev/mo, Enterprise custom",
-                        },
-                    ],
-                    "mode": "non-LLM mode",
-                }
-            first_url = next(iter(self.scraped_pages.keys()), "")
-            domain = first_url.split("//")[-1].split("/")[0] if first_url else "Business"
+            raw_text = "".join(self.scraped_pages.values()).strip()
+            if not raw_text:
+                raise ValueError("Could not extract product information: stored text is empty.")
+            all_txt = self._get_all_content()
+
+            company_name = self._extract_company_name_deterministic()
+            products_list = self._extract_products_deterministic(all_txt, company_name)
+
+            if not products_list:
+                primary_name = f"{company_name} Platform"
+                products_list = [{
+                    "name": primary_name,
+                    "description": f"{company_name} core operations and business services. (non-LLM mode)",
+                    "value_props": f"Reliable operational solutions by {company_name}. (non-LLM mode)",
+                    "pricing": "Contact for pricing",
+                }]
+
+            primary_prod = products_list[0]
             return {
-                "company_name": domain.replace("www.", "").capitalize(),
-                "product_name": domain.replace("www.", ""),
-                "product_description": f"{domain} operations and services. (non-LLM mode)",
-                "pricing": "Contact for pricing",
-                "key_benefits": ["Efficiency", "Quality", "Support"],
-                "features": ["Core service"],
-                "target_audience": "Prospective clients and business partners",
-                "value_proposition": f"Reliable solutions by {domain}",
+                "company_name": company_name,
+                "product_name": primary_prod["name"],
+                "product_description": primary_prod["description"],
+                "pricing": primary_prod.get("pricing", "Contact for pricing"),
+                "key_benefits": [
+                    f"Operational efficiency with {primary_prod['name']}",
+                    "Reduced manual administrative overhead",
+                    "Seamless cross-team coordination",
+                ],
+                "features": [
+                    f"{primary_prod['name']} core engine",
+                    "Automated error handling and monitoring",
+                    "Data sync and status reporting",
+                ],
+                "target_audience": f"Operations and business leaders seeking {primary_prod['name']} capabilities",
+                "value_proposition": primary_prod["value_props"],
+                "products": products_list,
                 "mode": "non-LLM mode",
             }
         return result
@@ -686,50 +803,109 @@ Be specific — don't guess generically. Base this on what the website actually 
             prompt, session_id="sellbird-trainer", agent="trainer", task="extract_icp"
         )
         if not isinstance(result, dict) or not result:
-            p_name = ((product.get("name") if product else "") or "").lower()
-            if "pulse" in p_name:
-                return {
-                    "industries": ["Software", "Technology", "Internet"],
-                    "company_size": "20-250 engineers",
-                    "titles": ["VP Engineering", "CTO", "Director of Engineering", "Head of DevOps"],
-                    "geography": ["United States"],
-                    "buyer_persona": "Engineering leaders focused on delivery speed and developer productivity.",
-                    "pain_points": [
-                        "PR review bottlenecks slow down releases",
-                        "Flaky tests mask production bugs",
-                        "Lack of visibility into engineering DORA metrics",
-                    ],
-                    "disqualifiers": [
-                        "Companies without a dedicated engineering team",
-                        "Non-software organizations",
-                    ],
-                    "mode": "non-LLM mode",
-                }
-            elif "flow" in p_name:
-                return {
-                    "industries": ["Logistics", "Supply Chain", "E-commerce", "Manufacturing"],
-                    "company_size": "50-500 employees",
-                    "titles": ["VP Operations", "Director of Supply Chain", "Head of Logistics", "COO"],
-                    "geography": ["United States"],
-                    "buyer_persona": "Operations executives burdened by manual fulfillment workflows and sync errors.",
-                    "pain_points": [
-                        "Manual order processing consumes dozens of hours weekly",
-                        "Inventory discrepancies across ERP and warehouse systems",
-                        "Delays in shipment tracking and vendor communication",
-                    ],
-                    "disqualifiers": [
-                        "Companies with fewer than 10 shipments per month",
-                        "Businesses without existing ERP or warehouse software",
-                    ],
-                    "mode": "non-LLM mode",
-                }
+            raw_text = "".join(self.scraped_pages.values()).strip()
+            if not raw_text:
+                raise ValueError("Could not extract ICP: stored text is empty.")
+            all_content = self._get_all_content()
+
+            p_name = ""
+            p_desc = ""
+            if product:
+                p_name = (product.get("name") or product.get("product_name") or "").strip()
+                p_desc = (product.get("description") or product.get("product_description") or "").strip()
+
+            target_text = f"{all_content}\n{p_name}\n{p_desc}".lower()
+
+            # 1. Industries from keywords in target text
+            industry_kw_map = [
+                (r"\b(software|saas|developer|code|api|cloud|devops|telemetry|dora)\b", "Software"),
+                (r"\b(logistics|freight|warehouse|fulfillment|shipping|supply chain)\b", "Logistics"),
+                (r"\b(manufacturing|factory|plant|industrial)\b", "Manufacturing"),
+                (r"\b(healthcare|clinical|medical|hospital|patient|health)\b", "Healthcare"),
+                (r"\b(fintech|banking|financial|payments|investment)\b", "Financial Services"),
+                (r"\b(e-?commerce|retail|store|merchandise)\b", "E-commerce"),
+                (r"\b(cybersecurity|security|infosec|compliance)\b", "Cybersecurity"),
+                (r"\b(education|edtech|learning|school|university)\b", "Education"),
+                (r"\b(telecom|telecommunications|network)\b", "Telecommunications"),
+                (r"\b(construction|contractor|architecture)\b", "Construction"),
+                (r"\b(marketing|advertising|media)\b", "Marketing"),
+            ]
+            industries = []
+            for pattern, ind_name in industry_kw_map:
+                if re.search(pattern, target_text):
+                    if ind_name not in industries:
+                        industries.append(ind_name)
+
+            if not industries:
+                industries = ["Technology", "Business Services"]
+
+            # 2. Decision Maker Titles from functional keywords
+            titles = []
+            if any(w in target_text for w in ("engineering", "developer", "dora", "telemetry", "devops", "code", "software")):
+                titles.extend(["VP Engineering", "CTO", "Director of Engineering", "Head of DevOps"])
+            if any(w in target_text for w in ("logistics", "supply chain", "warehouse", "fulfillment", "operations", "order", "erp")):
+                titles.extend(["VP Operations", "Director of Supply Chain", "Head of Logistics", "COO"])
+            if any(w in target_text for w in ("security", "ciso", "compliance", "threat")):
+                titles.extend(["CISO", "VP Security", "Director of Information Security"])
+            if any(w in target_text for w in ("clinical", "medical", "physician", "patient")):
+                titles.extend(["Chief Medical Officer", "Director of Clinical Operations", "Practice Manager"])
+            if any(w in target_text for w in ("financial", "cfo", "accounting", "treasury")):
+                titles.extend(["CFO", "VP Finance", "Director of Finance"])
+
+            if not titles:
+                titles = ["VP Operations", "Director", "Head of Department", "Founder", "CEO"]
+
+            seen_titles = set()
+            dedup_titles = []
+            for t in titles:
+                if t not in seen_titles:
+                    seen_titles.add(t)
+                    dedup_titles.append(t)
+            titles = dedup_titles[:6]
+
+            # 3. Company Size
+            size_match = re.search(r"\b(\d+\s*[-–]\s*\d+\s*(?:employees|engineers|staff|people)?)\b", target_text)
+            if size_match:
+                company_size = size_match.group(1).strip()
+                if "employee" not in company_size and "engineer" not in company_size:
+                    company_size += " employees"
+            elif any(w in target_text for w in ("enterprise", "fortune", "global")):
+                company_size = "250-2,500+ employees"
+            elif any(w in target_text for w in ("mid-market", "growth", "scale")):
+                company_size = "50-500 employees"
+            else:
+                company_size = "10-200 employees"
+
+            # 4. Pain Points from text lines or keywords
+            pain_keywords = ["bottleneck", "delay", "friction", "manual", "error", "inefficiency", "overhead", "flaky", "discrepanc", "sync"]
+            pain_points = []
+            for line in all_content.splitlines():
+                line_clean = line.strip().lstrip("-*#0123456789. ")
+                if 20 < len(line_clean) < 140:
+                    if any(pw in line_clean.lower() for pw in pain_keywords):
+                        if line_clean not in pain_points:
+                            pain_points.append(line_clean)
+                            if len(pain_points) >= 3:
+                                break
+
+            if not pain_points:
+                prod_label = p_name or "operational workflows"
+                pain_points = [
+                    f"Manual overhead and coordination delays in {prod_label}",
+                    f"Lack of automated visibility across {industries[0]} processes",
+                ]
+
             return {
-                "industries": ["Technology", "Services"],
-                "company_size": "10-200 employees",
-                "titles": ["VP", "Director", "Head of", "Owner", "Founder"],
+                "industries": industries[:3],
+                "company_size": company_size,
+                "titles": titles,
                 "geography": ["United States"],
-                "pain_points": ["Manual overhead", "Slow operational velocity"],
-                "disqualifiers": ["No budget", "Outside operating region"],
+                "buyer_persona": f"Leaders in {industries[0]} focused on streamlining {p_name or 'core operations'}. (non-LLM mode)",
+                "pain_points": pain_points,
+                "disqualifiers": [
+                    f"Companies without dedicated {titles[0].split()[-1]} leadership",
+                    "Organizations outside target operating region",
+                ],
                 "mode": "non-LLM mode",
             }
         return result
@@ -990,7 +1166,7 @@ What prospects do instead of buying a solution like ours:
         company = product_info.get("company_name", "Your Company")
         product = product_info.get("product_name", "Your Product")
         tone = product_info.get("tone", "professional, consultative, confident")
-        # "www.acme.com" should yield alex@acme.com, not alex@www.acme.com
+        # "www.example.com" should yield alex@example.com, not alex@www.example.com
         email_domain = domain.removeprefix("www.")
 
         return {
@@ -1052,8 +1228,8 @@ def main():
         print("Usage: python -m sellbird.trainer <website-url> [max-pages]")
         print("")
         print("Examples:")
-        print("  python -m sellbird.trainer https://acmecorp.com")
-        print("  python -m sellbird.trainer https://acmecorp.com 200")
+        print("  python -m sellbird.trainer https://example.com")
+        print("  python -m sellbird.trainer https://example.com 200")
         sys.exit(1)
 
     url = _normalize_start_url(sys.argv[1])

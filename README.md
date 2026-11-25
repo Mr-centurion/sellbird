@@ -62,8 +62,10 @@ source .venv/bin/activate
 ### 3. Install Editable Package & Dependencies
 ```bash
 pip install --upgrade pip
-pip install -e .
+# Install core package with dev dependencies (includes pytest for testing):
+pip install -e ".[dev]"
 ```
+*(Use `pip install -e .` if you only need runtime dependencies without running the test suite).*
 
 ### 4. Start Ollama and Pull Local Models
 Start the local Ollama background server (in another terminal or as a service):
@@ -86,15 +88,37 @@ Run a one-time command to download and cache the Apache-2.0 `all-MiniLM-L6-v2` e
 python -c "from sentence_transformers import SentenceTransformer as S; S('all-MiniLM-L6-v2').encode(['test']); print('cached OK')"
 ```
 
-### 6. Launch the Local Dashboard
+> [!IMPORTANT]
+> The embedding model weights must be downloaded and cached using this command while online **before** operating in offline/air-gapped mode. Once cached locally in PyTorch/Hugging Face cache, all semantic retrieval and cosine-similarity scoring run 100% locally without network requests.
+
+### 6. First Run: Train & Seed Sample Data
+Quickly initialize your local database and train the AI on sample product information:
+```bash
+# 1. Train company profile and extract products/ICPs from local sample files:
+sellbird train --from-folder data/companies/sample_acme/
+
+# 2. Import sample prospect dataset into the local database:
+sellbird import-prospects data/prospects/sample_prospects.json
+```
+
+### 7. Launch the Local Dashboard & Run Workflows
+Start the local dashboard server:
 ```bash
 sellbird dashboard
 ```
 The command starts the local FastAPI server on `http://127.0.0.1:5555` and prints your private one-click token link:
 ```
-Sellbird dashboard running at http://127.0.0.1:5555/?token=sb_...
+Sellbird Dashboard running. Open this link to unlock it:
+  http://127.0.0.1:5555/#token=...
 ```
-Open the printed link in your browser to inspect prospects, ICPs, lead scores, drafts, and conversations.
+*(You can also retrieve the unlock link at any time with `sellbird dashboard --url`)*.
+
+Open the link in your browser to inspect and run your sales pipeline:
+- **Your company**: Review your trained company profile, product definitions, and synthesized ICPs.
+- **Prospects**: Inspect the 15 imported prospects, their company data, and buying signals.
+- **Outbox**: Review lead scoring breakdowns and approve/edit validated outbound email drafts.
+- **Conversations**: Monitor and evaluate prospect replies classified into the 8-label schema.
+- **Controls**: Check Ollama daemon connectivity, hardware profile detection, and inference log audit counters.
 
 ---
 

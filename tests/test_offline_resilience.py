@@ -266,6 +266,63 @@ async def test_trainer_non_llm_fallback():
 
 
 @pytest.mark.asyncio
+async def test_trainer_generic_fallback_made_up_company():
+    """Fallback works on arbitrary non-Acme company with zero canned Acme text."""
+    from sellbird.trainer import Trainer
+
+    brain = MagicMock()
+    brain.think_json = AsyncMock(return_value=None)
+    trainer = Trainer()
+    trainer.brain = brain
+    trainer.scraped_pages = {
+        "about.txt": "About Stellar Dynamics\nStellar Dynamics engineers satellite constellation communication systems.",
+        "products.txt": "Product 1: StellarLink Hub\nOverview: Low-latency ground station router for orbital data relay.\n\nProduct 2: OrbitalMesh Core\nOverview: Inter-satellite laser mesh networking software.",
+    }
+
+    product_info = await trainer._extract_product_info()
+    assert product_info.get("mode") == "non-LLM mode"
+    assert product_info.get("company_name") == "Stellar Dynamics"
+    assert product_info.get("product_name") == "StellarLink Hub"
+    assert len(product_info.get("products", [])) == 2
+    assert product_info["products"][0]["name"] == "StellarLink Hub"
+    assert product_info["products"][1]["name"] == "OrbitalMesh Core"
+
+    # Confirm no Acme strings in product info
+    info_str = str(product_info).lower()
+    assert "acme" not in info_str
+    assert "pulse" not in info_str
+    assert "flow" not in info_str
+
+    icp = await trainer._extract_icp(product=product_info["products"][0])
+    assert icp.get("mode") == "non-LLM mode"
+    assert any(ind in icp.get("industries", []) for ind in ("Software", "Technology", "Telecommunications"))
+
+    # Confirm no Acme strings in ICP
+    icp_str = str(icp).lower()
+    assert "acme" not in icp_str
+    assert "pulse" not in icp_str
+    assert "flow" not in icp_str
+
+
+@pytest.mark.asyncio
+async def test_trainer_fallback_empty_content_raises_error():
+    """Empty content raises clear ValueError instead of inventing content."""
+    from sellbird.trainer import Trainer
+
+    brain = MagicMock()
+    brain.think_json = AsyncMock(return_value=None)
+    trainer = Trainer()
+    trainer.brain = brain
+    trainer.scraped_pages = {"empty.txt": "   \n\t  "}
+
+    with pytest.raises(ValueError, match="stored text is empty"):
+        await trainer._extract_product_info()
+
+    with pytest.raises(ValueError, match="stored text is empty"):
+        await trainer._extract_icp()
+
+
+@pytest.mark.asyncio
 async def test_scout_scoring_non_llm_fallback(tmp_path):
     """Scout lead scoring uses heuristic score when Brain fails, tagging non-LLM mode."""
     from sellbird.agents.scout import Scout

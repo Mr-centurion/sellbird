@@ -15,8 +15,9 @@ echo "=== Running No-Cloud & Air-Gap Compliance Check ==="
 CLOUD_IMPORTS_REGEX="(import[[:space:]]+(anthropic|openai|boto3|cohere|azure\.ai|google\.generativeai)|from[[:space:]]+(anthropic|openai|boto3|cohere|azure\.ai|google\.generativeai))"
 API_KEYS_REGEX="(ANTHROPIC_API_KEY|OPENAI_API_KEY|CLAUDE_API_KEY|GEMINI_API_KEY|COHERE_API_KEY|sk-[a-zA-Z0-9]{20,})"
 BANNED_PROVIDERS_REGEX="\b(anthropic|openai|claude|codex|bedrock|chatgpt)\b"
+BANNED_SERVICES_REGEX="(\b(gemini|zerobounce|reoon|cloudflare|dataforseo|serper|scavio|tinyfish|trulyinbox|precleared)\b|(hunter\.io|instantly\.ai))"
 
-COMBINED_REGEX="(${CLOUD_IMPORTS_REGEX}|${API_KEYS_REGEX}|${BANNED_PROVIDERS_REGEX})"
+COMBINED_REGEX="(${CLOUD_IMPORTS_REGEX}|${API_KEYS_REGEX}|${BANNED_PROVIDERS_REGEX}|${BANNED_SERVICES_REGEX})"
 
 # Run git grep or ripgrep/grep ignoring known legacy migration schema and specified fixtures
 MATCHES=$(git grep -i -E "$COMBINED_REGEX" -- ':!docs/AUDIT.md' ':!docs/no_cloud_check.txt' ':!tests/fixtures/**' ':!*.sql' ':!scripts/no_cloud_check.sh' 2>/dev/null || true)

@@ -465,7 +465,7 @@ MIGRATIONS: list[str] = [
     """
     -- The best prospect for anyone selling websites is a business that has
     -- none, so `domain` cannot be the only identity key. `external_id` holds
-    -- the provider's stable id ("dataforseo:ChIJ...", "osm:node/123") and is
+    -- the provider's stable id ("osm:node/123", "custom:ChIJ...") and is
     -- what dedups a re-run for those records.
     ALTER TABLE companies ADD COLUMN external_id TEXT DEFAULT '';
     ALTER TABLE companies ADD COLUMN phone TEXT DEFAULT '';
@@ -2803,45 +2803,61 @@ class StateManager:
     async def get_usage_today(self, provider: str = "ollama", today: str | None = None) -> int:
         """Brain calls made today."""
         target_day = today or date.today().isoformat()
-        async with self._connect() as db:
-            if today is not None:
-                # Explicit date specified (e.g. from dashboard with local date)
+        try:
+            async with self._connect() as db:
+                if today is not None:
+                    # Explicit date specified (e.g. from dashboard with local date)
+                    async with db.execute(
+                        "SELECT COUNT(*) FROM inference_log WHERE task != 'usage' AND date(ts) = ?",
+                        (target_day,),
+                    ) as cursor:
+                        row = await cursor.fetchone()
+                        inf_count = (row[0] or 0) if row else 0
+                        if inf_count > 0:
+                            return inf_count
+                else:
+                    target_utc = datetime.now(timezone.utc).date().isoformat()
+                    async with db.execute(
+                        "SELECT COUNT(*) FROM inference_log WHERE task != 'usage' AND (date(ts) = ? OR date(ts) = ?)",
+                        (target_day, target_utc),
+                    ) as cursor:
+                        row = await cursor.fetchone()
+                        inf_count = (row[0] or 0) if row else 0
+                        if inf_count > 0:
+                            return inf_count
                 async with db.execute(
-                    "SELECT COUNT(*) FROM inference_log WHERE task != 'usage' AND date(ts) = ?",
+                    "SELECT claude_calls FROM usage_log WHERE date = ?",
                     (target_day,),
                 ) as cursor:
                     row = await cursor.fetchone()
-                    inf_count = (row[0] or 0) if row else 0
-                    if inf_count > 0:
-                        return inf_count
-            else:
-                target_utc = datetime.now(timezone.utc).date().isoformat()
-                async with db.execute(
-                    "SELECT COUNT(*) FROM inference_log WHERE task != 'usage' AND (date(ts) = ? OR date(ts) = ?)",
-                    (target_day, target_utc),
-                ) as cursor:
-                    row = await cursor.fetchone()
-                    inf_count = (row[0] or 0) if row else 0
-                    if inf_count > 0:
-                        return inf_count
-            async with db.execute(
-                "SELECT claude_calls FROM usage_log WHERE date = ?",
-                (target_day,),
-            ) as cursor:
-                row = await cursor.fetchone()
-                return (row[0] or 0) if row else 0
+                    return (row[0] or 0) if row else 0
+        except Exception:
+            return 0
 
     async def increment_usage(self, provider: str = "ollama", model: str = ""):
         """Increment daily usage counter in usage_log without polluting inference_log."""
         today = date.today().isoformat()
         async with self._connect() as db:
-            await db.execute(
-                """INSERT INTO usage_log (id, date, claude_calls)
-                   VALUES (?, ?, 1)
-                   ON CONFLICT(date) DO UPDATE SET claude_calls = claude_calls + 1""",
-                (_new_id(), today),
-            )
-            await db.commit()
+            try:
+                await db.execute(
+                    """INSERT INTO usage_log (id, date, claude_calls)
+                       VALUES (?, ?, 1)
+                       ON CONFLICT(date) DO UPDATE SET claude_calls = claude_calls + 1""",
+                    (_new_id(), today),
+                )
+                await db.commit()
+            except Exception as e:
+                if "no such table" in str(e).lower():
+                    await self.init_db()
+                    await db.execute(
+                        """INSERT INTO usage_log (id, date, claude_calls)
+                           VALUES (?, ?, 1)
+                           ON CONFLICT(date) DO UPDATE SET claude_calls = claude_calls + 1""",
+                        (_new_id(), today),
+                    )
+                    await db.commit()
+                else:
+                    raise
 
     # ── Per-call usage accounting (usage_events) ──
 

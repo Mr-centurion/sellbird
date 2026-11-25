@@ -471,8 +471,7 @@ async def run_offline_test(
     err_w1 = ""
     profile_data = {}
     try:
-        trainer = Trainer(brain_config=brain_cfg)
-        trainer.state = state
+        trainer = Trainer(brain_config=brain_cfg, state=state)
         sample_folder = PROJECT_ROOT / "data" / "companies" / "sample_acme"
         # Load local folder content
         for path in sample_folder.glob("*.txt"):
