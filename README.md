@@ -119,7 +119,7 @@ Greps the repository to ensure zero cloud SDK imports (`anthropic`, `openai`, `b
 ```
 
 ### 3. Evaluate Reply Classification Accuracy
-Tests the 8-label reply classifier against the 20 sample threads:
+Tests the 8-label reply classifier against the 32 sample threads (20 clear + 12 indirect):
 ```bash
 sellbird eval-replies
 ```
@@ -141,9 +141,9 @@ Comprehensive project documentation is organized below:
 | [Models and Licenses](docs/MODELS_AND_LICENSES.md) | Verified license and version matrix for models (`qwen3:1.7b`, `qwen3:4b`, `all-MiniLM-L6-v2`) and dependencies |
 | [Hardware Detection & Benchmarks](docs/HARDWARE.md) | Auto-detection logic, RAM sizing tiers, hardware profiles, and empirical latencies from real 8 GB Apple Silicon benchmarks |
 | [Offline & Failure Handling](docs/OFFLINE_AND_FAILURE.md) | Offline vs online capabilities, Ollama downtime handling, dashboard alert banner, task queue, and deterministic fallbacks |
-| [Zero-Cost Statement & Dependencies](docs/COST_AND_DEPENDENCIES.md) | $0.00 model cost verification, SQLite inference log audit (60/60 local calls), and compliance script details |
+| [Zero-Cost Statement & Dependencies](docs/COST_AND_DEPENDENCIES.md) | $0.00 model cost verification, SQLite inference log audit (32/32 local calls), and compliance script details |
 | [Known Limitations](docs/KNOWN_LIMITATIONS.md) | Air-gap testing boundary (socket guard vs physical off), synthetic sample data files, small-model constraints, and legacy schema columns |
-| [Testing Evidence](docs/TESTING_EVIDENCE.md) | Complete unit test results (2,873 passed), real air-gapped test summary, and reply classification accuracy |
+| [Testing Evidence](docs/TESTING_EVIDENCE.md) | Complete unit test results (2,878 passed), real air-gapped test summary, and reply classification accuracy |
 | [How Sellbird Works](docs/how-it-works.md) | Detailed operational heartbeat, pipeline lifecycle, and background agents |
 | [Signals & Pipeline](docs/signals-and-pipeline.md) | The 29 buying signals, discovery, enrichment, and verification stages |
 | [Dashboard Guide](docs/dashboard.md) | Overview of each UI screen, prospect scoring breakdown, and Outbox management |

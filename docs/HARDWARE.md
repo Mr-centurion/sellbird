@@ -41,7 +41,7 @@ brain:
 
 ## 3. Measured Latencies from Real Air-Gapped Evidence Run
 
-The benchmark below reflects real, verified measurements from `docs/evidence/offline_report_20261125_120715.md`.
+The benchmark below reflects real, verified measurements from `docs/evidence/offline_report_20261125_131553.md`.
 
 ### Host Environment Under Test
 - **Operating System**: macOS Darwin (Apple Silicon arm64)
@@ -50,21 +50,34 @@ The benchmark below reflects real, verified measurements from `docs/evidence/off
 - **GPU Accelerator**: Apple Silicon (Unified Memory: 8.0 GB)
 - **Model Evaluated**: `qwen3:1.7b` (`num_ctx`: 2048)
 - **Ollama Version**: 0.40.17
-- **Total Test Suite Duration**: 227.04 seconds
+- **Total Test Suite Duration**: 108.12 seconds
 
 ### Per-Workflow Measured Latency Table
 
 | # | Workflow Name | Status | Model | Measured Latency | Execution Details & Workload |
 |---|---|---|---|---|---|
-| **1** | Business Profile Extraction | **PASS** | `qwen3:1.7b` | **34,087 ms** | Synthesized company profile & extracted 2 products from stored text |
-| **2** | ICP Generation | **PASS** | `qwen3:1.7b` | **35,485 ms** | Generated ICP definitions for 2 distinct products |
-| **3** | Stored Research | **PASS** | `qwen3:1.7b` | **30,121 ms** | Researched 3 stored prospects (Apex: 11,413ms, CloudMetrics: 9,686ms, MedPulse: 8,612ms) |
-| **4** | Buying Signals | **PASS** | `qwen3:1.7b` | **5,942 ms** | Classified signals across 3 prospects with verbatim quote enforcement |
-| **5** | Problem Statements | **PASS** | `qwen3:1.7b` | **41,276 ms** | Generated 6 statements (3 prospects × 2 products, avg 6,879 ms per statement) |
-| **6** | Validated Email Drafting | **PASS** | `qwen3:1.7b` | **38,839 ms** | Drafted 6 validated emails (3 prospects × 2 products; 1 validation retry handled) |
-| **7** | Lead Scoring & Breakdown | **PASS** | `qwen3:1.7b` | **27,551 ms** | Scored 6 combinations via cached cosine similarity + LLM rationale (avg 4,591 ms) |
-| **8** | Reply Classification | **PASS** | `qwen3:1.7b` | **13,263 ms** | Classified 5 real reply threads into 8-label schema (avg 2,652 ms per thread) |
+| **1** | Business Profile Extraction | **PASS** | `qwen3:1.7b` | **17,957 ms** | Synthesized company profile & extracted 2 products for Acme Technologies |
+| **2** | ICP Generation | **PASS** | `qwen3:1.7b` | **17,306 ms** | Generated ICP definitions for 2 distinct products (`acme_flow`, `acme_pulse`) |
+| **3** | Stored Research | **PASS** | `qwen3:1.7b` | **21,981 ms** | Researched 3 stored prospects (Apex Logistics, CloudMetrics AI, MedPulse Health) |
+| **4** | Buying Signals | **PASS** | `qwen3:1.7b` | **3,422 ms** | Classified 3 signals across 3 prospects with verbatim quote enforcement |
+| **5** | Problem Statements | **PASS** | `qwen3:1.7b` | **16,966 ms** | Generated 6 statements (3 prospects × 2 products) |
+| **6** | Validated Email Drafting | **PASS** | `qwen3:1.7b` | **12,610 ms** | Drafted 6 validated emails (3 prospects × 2 products) |
+| **7** | Lead Scoring & Breakdown | **PASS** | `qwen3:1.7b` | **10,503 ms** | Scored 6 combinations via cached cosine similarity + LLM rationale (avg score 47) |
+| **8** | Reply Classification | **PASS** | `qwen3:1.7b` | **6,875 ms** | Classified 5 real reply threads into 8-label schema |
+
+### Per-Task Average Latencies from Evidence Report
+
+| Task | Total Calls | Average Latency (ms) | Description | Source Database |
+|---|---|---|---|---|
+| `buying_signals` | 6 | **918 ms** | Signal classification with verbatim evidence quote check | `data/offline_test.db` |
+| `classify_reply` | 5 | **1,359 ms** | Multi-turn email reply classification (offline test run, 5 threads) | `data/offline_test.db` |
+| `score_rationale` | 6 | **1,567 ms** | Numeric lead score rationales, top 3 reasons, and main risk | `data/offline_test.db` |
+| `email_draft` | 6 | **2,078 ms** | Cold email drafting with strict in-code rule validation | `data/offline_test.db` |
+| `problem_statement` | 6 | **2,440 ms** | Prospect-product problem statement synthesis | `data/offline_test.db` |
+| `stored_research` | 3 | **4,331 ms** | Prospect stored website dossier synthesis | `data/offline_test.db` |
+
+> **Run Distinction**: The 1,359 ms average for `classify_reply` above is from Workflow 8 of the air-gapped run recorded in `data/offline_test.db` (5 threads). In the separate 32-thread `sellbird eval-replies` benchmark recorded in `data/sellbird.db`, `classify_reply` averaged **1,354 ms** over 32 inferences.
 
 ### Key Observations
-1. **Interactive vs Batch Execution**: Fast classification tasks (Buying Signals, Reply Classification) average 1.7s to 2.6s per item on 8 GB hardware.
-2. **Generative Multi-item Pipelines**: Drafting and problem synthesis across multi-product matrices take ~35–41 seconds for 6 full generations, demonstrating the utility of background task queues during bulk runs.
+1. **Interactive vs Batch Execution**: Fast classification tasks (Buying Signals, Reply Classification) average 0.9s to 1.4s per item on 8 GB hardware.
+2. **Generative Multi-item Pipelines**: Drafting and problem synthesis across multi-product matrices take ~12 to 17 seconds for 6 full generations, demonstrating the utility of background task queues during bulk runs.

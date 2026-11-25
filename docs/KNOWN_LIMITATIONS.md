@@ -23,7 +23,7 @@ The repository contains strictly fictional sample datasets used for demonstratio
    - Each entry contains company name, industry, size, contact name, contact title, 40–80 word website description, and 2–3 dated recent news items.
    - Explicitly tagged with `"sample_data": "SAMPLE DATA"`.
 2. **`data/replies/sample_threads.json`**:
-   - Contains 20 fictional cold outreach reply email threads.
+   - Contains 32 fictional cold outreach reply email threads (20 clear standard threads + 12 harder indirect-wording threads added for robust boundary evaluation).
    - Balances across all 8 supported classification categories (`interested`, `objection`, `not_now`, `not_interested`, `unsubscribe`, `out_of_office`, `referral`, `unclear`).
    - Explicitly tagged with `"sample_flag": "SAMPLE DATA"`.
 3. **`data/companies/sample_acme/` (`about.txt`, `products.txt`, `pricing.txt`)**:
@@ -34,9 +34,14 @@ The repository contains strictly fictional sample datasets used for demonstratio
 
 ## 3. Small-Model Quality Limits & Inference Latency
 
+- **Reply Classification Weakness on 1.7B Model & Unmeasured Larger Models**:
+  - The compact 1.7B parameter model (`qwen3:1.7b`) is weak on nuanced, indirect reply phrasing, scoring 16/32 (50.0%) accuracy on the 32 sample threads in `sellbird eval-replies`.
+  - The model frequently misclassifies polite deferrals (e.g., "reach out next quarter during budget planning") and referrals (e.g., "looping in our VP of Infrastructure") as `not_interested` or `objection`.
+  - A larger local model (`qwen3:4b` or `qwen3:8b`) is expected to achieve higher classification accuracy on nuanced language, but was not measured in this evidence benchmark.
+  - While the deterministic heuristic fallback achieved 32/32 (100.0%) accuracy on the sample set, note that the heuristic rules were written alongside the sample set, so this is **NOT** a held-out measure of its quality on unseen real-world replies.
 - **Generation Latency on Entry Hardware**:
-  - Running `qwen3:1.7b` on an entry-level workstation (8 GB RAM / Apple Silicon) produces latencies of ~30 to 41 seconds for complex generative workflows (such as Problem Statement synthesis or Validated Email Drafting across a 3 prospect × 2 product matrix).
-  - While fast classification (signals, reply handling) takes 1.7s–2.6s per item, bulk generative tasks should be dispatched asynchronously via the task queue rather than waited on synchronously in the UI.
+  - Running `qwen3:1.7b` on an entry-level workstation (8 GB RAM / Apple Silicon) produces latencies of ~12 to 17 seconds for complex multi-item generative workflows (such as Problem Statement synthesis or Validated Email Drafting across a 3 prospect × 2 product matrix).
+  - While fast classification (signals, reply handling) takes 0.9s–1.4s per item, bulk generative tasks should be dispatched asynchronously via the task queue rather than waited on synchronously in the UI.
 - **Context Size Constraints**:
   - `qwen3:1.7b` operates with a default context window of 2,048 tokens (`num_ctx: 2048`). Very large stored prospect website dossiers must be chunked or retrieved via top-k embedding similarity snippets before being passed to the model.
 - **Validation Retries**:
@@ -68,3 +73,10 @@ These columns are legacy schema artifacts from older prototypes. In version 0.4.
 
 - An AI coding assistant was utilized strictly as an interactive software development and coding tool during codebase development, refactoring, and test writing.
 - The compiled Sellbird software, runtime daemons, background workers, and CLI binaries make **zero cloud AI calls** and contain no cloud SDK dependencies.
+
+---
+
+## 7. Pytest Test Suite vs Real Inference Evidence
+
+- The automated `pytest` test suite runs strictly against a lightweight stub model server (`fake_ollama`) with loopback network isolation. This ensures that unit and integration tests run deterministically, fast (<2 minutes for ~2,880 tests), and without requiring a GPU or active Ollama model daemon.
+- Real model results, empirical token latencies, and output quality assessments come **only** from the empirical evidence report ([offline_report_20261125_131553.md](file:///Users/anandvardhanchauhan/projects/harvey/docs/evidence/offline_report_20261125_131553.md)) and the live `sellbird eval-replies` CLI run.
