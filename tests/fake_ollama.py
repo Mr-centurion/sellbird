@@ -7,6 +7,7 @@ context manager) and standalone CLI process execution:
 """
 
 import json
+import os
 import sys
 import threading
 import time
@@ -242,6 +243,19 @@ class FakeOllamaServer:
             or "respond only with valid json" in p_lower
         )
 
+        if "classify" in p_lower and ("8 labels" in p_lower or "sales email reply" in p_lower):
+            from sellbird.reply_classifier import classify_reply_heuristic
+            reply_body = prompt
+            if '<untrusted source="prospect_reply">' in prompt:
+                reply_body = prompt.split('<untrusted source="prospect_reply">', 1)[1].split('</untrusted>', 1)[0]
+            heur = classify_reply_heuristic(reply_body)
+            return {
+                "label": heur["label"],
+                "confidence": heur["confidence"],
+                "reasoning": heur["reasoning"],
+                "suggested_next_action": heur["suggested_next_action"],
+            }
+
         if "classify" in p_lower:
             if "pricing" in p_lower or "interested" in p_lower or "cost" in p_lower:
                 return "interested" if not is_json else {"intent": "interested"}
@@ -255,6 +269,7 @@ class FakeOllamaServer:
         return DEFAULT_TEXT_REPLY
 
     def start(self):
+        os.environ["SELLBIRD_INFERENCE_MODE"] = "fake"
         self.server = ThreadingHTTPServer((self.host, self.requested_port), FakeOllamaHandler)
         self.server.ollama_server = self
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
@@ -262,6 +277,7 @@ class FakeOllamaServer:
         return self
 
     def stop(self):
+        os.environ.pop("SELLBIRD_INFERENCE_MODE", None)
         if self.server:
             self.server.shutdown()
             self.server.server_close()

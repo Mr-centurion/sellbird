@@ -46,4 +46,63 @@ def _no_home_seeding(monkeypatch):
     monkeypatch.setattr(sellbird.home, "seed_home", lambda home, source: [])
 
 
+from pathlib import Path
+from sellbird.paths import PROJECT_ROOT
+
+DATA_DIR = PROJECT_ROOT / "data"
+
+
+@pytest.fixture(autouse=True)
+def _isolate_test_database(tmp_path_factory, monkeypatch):
+    """Ensure every test runs against a temporary database, never data/sellbird.db."""
+    temp_dir = tmp_path_factory.mktemp("test_home")
+    temp_data = temp_dir / "data"
+    temp_data.mkdir(parents=True, exist_ok=True)
+    temp_db = temp_data / "test_sellbird.db"
+
+    import sellbird.state as state_mod
+    import sellbird.dashboard as dash_mod
+    import sellbird.ollama_runtime as runtime_mod
+
+    monkeypatch.setattr(state_mod, "DB_PATH", temp_db)
+    monkeypatch.setattr(dash_mod, "DB_PATH", temp_db)
+    monkeypatch.setattr(dash_mod, "AGENT_TOKEN_FILE", temp_data / "agent-token")
+    monkeypatch.setattr(runtime_mod, "DB_PATH", temp_db)
+
+    yield temp_db
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _assert_no_data_writes_during_session():
+    """Fail if the test suite writes or modifies any database or runtime file in data/."""
+    initial_mtimes = {}
+    if DATA_DIR.exists():
+        for p in DATA_DIR.rglob("*"):
+            if p.is_file():
+                try:
+                    initial_mtimes[str(p.resolve())] = p.stat().st_mtime
+                except OSError:
+                    pass
+
+    yield
+
+    if DATA_DIR.exists():
+        for p in DATA_DIR.rglob("*"):
+            if p.is_file():
+                path_str = str(p.resolve())
+                if p.name in ("sellbird.db", "sellbird.db-wal", "sellbird.db-shm", "offline_test.db"):
+                    if path_str in initial_mtimes:
+                        mtime_now = p.stat().st_mtime
+                        if mtime_now != initial_mtimes[path_str]:
+                            raise AssertionError(
+                                f"TEST SUITE VIOLATION: {p} in data/ was modified during tests! "
+                                f"Tests must only use temporary databases."
+                            )
+                    else:
+                        raise AssertionError(
+                            f"TEST SUITE VIOLATION: New database {p} was created in data/ during tests! "
+                            f"Tests must only use temporary databases."
+                        )
+
+
 from tests.fake_ollama import fake_ollama, FakeOllamaServer  # noqa: E402, F401

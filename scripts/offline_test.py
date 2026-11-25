@@ -338,6 +338,7 @@ async def run_offline_test(
     ollama_url = ollama_url_override or "http://127.0.0.1:11434"
 
     if use_fake:
+        os.environ["SELLBIRD_INFERENCE_MODE"] = "fake"
         from tests.fake_ollama import FakeOllamaServer
         print("\n[Phase 2] Starting FakeOllamaServer on loopback...")
         print("*** RUNNING WITH --use-fake (FAKE SERVER, NOT EVIDENCE) ***")
@@ -348,6 +349,7 @@ async def run_offline_test(
         ollama_version = "0.40.17 (FakeOllamaServer)"
         print(f"[OK] FakeOllamaServer listening on {ollama_url}")
     else:
+        os.environ["SELLBIRD_INFERENCE_MODE"] = "real"
         print(f"\n[Phase 2] Connecting to local Ollama daemon at {ollama_url}...")
         try:
             req = urllib.request.Request(f"{ollama_url}/api/version")
@@ -703,9 +705,11 @@ async def run_offline_test(
     import aiosqlite
     async with aiosqlite.connect(db_path) as db:
         db.row_factory = aiosqlite.Row
+        mode_clause = "AND mode = 'real'" if not use_fake else ""
         async with db.execute(
-            "SELECT id, ts, agent, task, model, host, latency_ms, status "
-            "FROM inference_log WHERE id >= ? ORDER BY id ASC",
+            f"SELECT id, ts, agent, task, model, host, latency_ms, status, mode "
+            f"FROM inference_log WHERE id >= ? AND task != 'usage' AND agent != 'brain' {mode_clause} "
+            f"ORDER BY id ASC",
             (min_log_id,),
         ) as cur:
             log_rows = [dict(r) for r in await cur.fetchall()]
@@ -800,13 +804,13 @@ async def run_offline_test(
         f"",
         f"### Detailed Inference Log Rows",
         f"",
-        f"| ID | Timestamp | Agent | Task | Model | Host | Latency (ms) | Status |",
-        f"|---|---|---|---|---|---|---|---|",
+        f"| ID | Timestamp | Agent | Task | Model | Host | Latency (ms) | Status | Mode |",
+        f"|---|---|---|---|---|---|---|---|---|",
     ])
 
     for row in log_rows:
         report_lines.append(
-            f"| {row.get('id')} | {row.get('ts')} | `{row.get('agent')}` | `{row.get('task')}` | `{row.get('model')}` | `{row.get('host')}` | {row.get('latency_ms')}ms | `{row.get('status')}` |"
+            f"| {row.get('id')} | {row.get('ts')} | `{row.get('agent')}` | `{row.get('task')}` | `{row.get('model')}` | `{row.get('host')}` | {row.get('latency_ms')}ms | `{row.get('status')}` | `{row.get('mode', 'real')}` |"
         )
 
     report_lines.extend([

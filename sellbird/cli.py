@@ -889,11 +889,12 @@ def cmd_import_prospects(args):
 
 def cmd_eval_replies(args):
     """Evaluate reply classification accuracy against expected labels for both LLM and heuristic paths."""
+    from collections import defaultdict
     from pathlib import Path
     from sellbird.brain import Brain
     from sellbird.config import BrainConfig, load_config
     from sellbird.paths import PROJECT_ROOT
-    from sellbird.reply_classifier import classify_reply, classify_reply_heuristic
+    from sellbird.reply_classifier import classify_reply, classify_reply_heuristic, VALID_LABELS
     from sellbird.state import StateManager
 
     async def _run():
@@ -918,29 +919,44 @@ def cmd_eval_replies(args):
             brain_cfg.model = args.model
 
         brain = Brain(state, brain_cfg)
+        ollama_reachable = False
+        ollama_err = ""
         try:
-            if not await brain.ollama.is_reachable():
-                brain.unavailable = "Ollama is unreachable"
-        except Exception:
-            brain.unavailable = "Ollama is unreachable"
+            preflight_err = await brain.ollama.preflight()
+            if preflight_err:
+                ollama_reachable = False
+                ollama_err = preflight_err
+                print(f"\n[ERROR] {ollama_err}\nCannot run LLM classification path.\n", file=sys.stderr)
+            else:
+                ollama_reachable = True
+        except Exception as e:
+            ollama_err = str(e)
+            print(f"\n[ERROR] Ollama connection failure: {e}\n", file=sys.stderr)
 
-        print("=" * 76)
+        print("=" * 96)
         print("  SELLBIRD REPLY CLASSIFICATION EVALUATION")
-        print("=" * 76)
+        print("=" * 96)
         print(f"Threads file : {threads_path}")
         print(f"Total threads: {len(threads)}")
-        print(f"LLM Model    : {brain.model} ({brain_cfg.ollama_url})")
-        print("-" * 76)
-        print(f"{'ID':<10} {'EXPECTED':<15} {'HEURISTIC':<15} {'LLM':<15} {'MATCH (H/L)'}")
-        print("-" * 76)
+        print(f"Config Model : {brain.model} ({brain_cfg.ollama_url})")
+        print("-" * 96)
+        print(f"{'ID':<10} {'EXPECTED':<15} {'HEURISTIC':<15} {'LLM':<15} {'MODEL':<14} {'LATENCY':<10} {'MATCH (H/L)'}")
+        print("-" * 96)
 
         heur_correct = 0
         llm_correct = 0
+
+        # Stats for confusion summary: label -> {"total": int, "heur_ok": int, "llm_ok": int, "heur_errors": list, "llm_errors": list}
+        label_stats = {lbl: {"total": 0, "heur_ok": 0, "llm_ok": 0, "heur_errors": [], "llm_errors": []} for lbl in sorted(VALID_LABELS)}
 
         for t in threads:
             tid = t.get("id", "thread")
             expected = t.get("expected_label", "").lower().strip()
             reply_text = t.get("reply_text", "")
+
+            if expected not in label_stats:
+                label_stats[expected] = {"total": 0, "heur_ok": 0, "llm_ok": 0, "heur_errors": [], "llm_errors": []}
+            label_stats[expected]["total"] += 1
 
             # 1. Heuristic path
             res_h = classify_reply_heuristic(reply_text)
@@ -948,28 +964,72 @@ def cmd_eval_replies(args):
             match_h = (pred_h == expected)
             if match_h:
                 heur_correct += 1
+                label_stats[expected]["heur_ok"] += 1
+            else:
+                label_stats[expected]["heur_errors"].append(pred_h)
 
             # 2. LLM path
-            res_l = await classify_reply(reply_text, brain=brain)
-            pred_l = res_l["label"].lower().strip()
-            match_l = (pred_l == expected)
-            if match_l:
-                llm_correct += 1
+            if not ollama_reachable:
+                pred_l = "ERROR"
+                model_l = "--"
+                lat_str = "--"
+                match_l = False
+                label_stats[expected]["llm_errors"].append("ERROR:unreachable")
+            else:
+                try:
+                    res_l = await classify_reply(
+                        reply_text,
+                        brain=brain,
+                        agent="reply_classifier",
+                        allow_fallback=False,
+                    )
+                    pred_l = res_l["label"].lower().strip()
+                    model_l = res_l.get("model") or brain.last_model or brain.model
+                    lat_ms = res_l.get("latency_ms", 0)
+                    lat_str = f"{lat_ms}ms"
+                    match_l = (pred_l == expected)
+                    if match_l:
+                        llm_correct += 1
+                        label_stats[expected]["llm_ok"] += 1
+                    else:
+                        label_stats[expected]["llm_errors"].append(pred_l)
+                except Exception as e:
+                    pred_l = "ERROR"
+                    model_l = "--"
+                    lat_str = "--"
+                    match_l = False
+                    label_stats[expected]["llm_errors"].append(f"ERROR:{type(e).__name__}")
+                    print(f"  [ERROR] {tid} LLM classification failed: {e}", file=sys.stderr)
 
             status_str = f"{'PASS' if match_h else 'FAIL'} / {'PASS' if match_l else 'FAIL'}"
-            print(f"{tid:<10} {expected:<15} {pred_h:<15} {pred_l:<15} {status_str}")
+            print(f"{tid:<10} {expected:<15} {pred_h:<15} {pred_l:<15} {model_l:<14} {lat_str:<10} {status_str}")
 
         total = len(threads)
         acc_h = (heur_correct / total * 100.0) if total else 0.0
         acc_l = (llm_correct / total * 100.0) if total else 0.0
 
-        print("=" * 76)
+        print("=" * 96)
         print("  EVALUATION RESULTS SUMMARY")
-        print("=" * 76)
+        print("=" * 96)
         print(f"Total Sample Threads Evaluated : {total}")
         print(f"Heuristic Path Accuracy        : {heur_correct}/{total} ({acc_h:.1f}%)")
         print(f"LLM Model Path Accuracy        : {llm_correct}/{total} ({acc_l:.1f}%)")
-        print("=" * 76)
+        print("-" * 96)
+        print("  CONFUSION & PER-LABEL ACCURACY SUMMARY")
+        print("-" * 96)
+        print(f"{'LABEL':<16} {'TOTAL':<8} {'HEURISTIC':<16} {'LLM':<16} {'MISCLASSIFICATIONS (HEUR / LLM)'}")
+        print("-" * 96)
+        for lbl in sorted(label_stats.keys()):
+            s = label_stats[lbl]
+            if s["total"] == 0:
+                continue
+            h_acc = f"{s['heur_ok']}/{s['total']} ({(s['heur_ok']/s['total']*100):.0f}%)"
+            l_acc = f"{s['llm_ok']}/{s['total']} ({(s['llm_ok']/s['total']*100):.0f}%)"
+            h_errs = ", ".join(f"->{err}" for err in s["heur_errors"]) if s["heur_errors"] else "none"
+            l_errs = ", ".join(f"->{err}" for err in s["llm_errors"]) if s["llm_errors"] else "none"
+            err_summary = f"H: {h_errs} | L: {l_errs}"
+            print(f"{lbl:<16} {s['total']:<8} {h_acc:<16} {l_acc:<16} {err_summary}")
+        print("=" * 96)
         return 0
 
     code = asyncio.run(_run())

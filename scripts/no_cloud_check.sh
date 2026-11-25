@@ -19,7 +19,7 @@ BANNED_PROVIDERS_REGEX="\b(anthropic|openai|claude|codex|bedrock|chatgpt)\b"
 COMBINED_REGEX="(${CLOUD_IMPORTS_REGEX}|${API_KEYS_REGEX}|${BANNED_PROVIDERS_REGEX})"
 
 # Run git grep or ripgrep/grep ignoring known legacy migration schema and specified fixtures
-MATCHES=$(git grep -i -E "$COMBINED_REGEX" -- ':!docs/AUDIT.md' ':!docs/no_cloud_check.txt' ':!tests/fixtures/**' ':!*.sql' 2>/dev/null || true)
+MATCHES=$(git grep -i -E "$COMBINED_REGEX" -- ':!docs/AUDIT.md' ':!docs/no_cloud_check.txt' ':!tests/fixtures/**' ':!*.sql' ':!scripts/no_cloud_check.sh' 2>/dev/null || true)
 
 # Filter out legacy SQLite migration SQL lines in state.py permitted by specification
 FILTERED_MATCHES=$(echo "$MATCHES" | grep -v -E "sellbird/state\.py:.*(claude_calls|codex_calls|v11:|Claude call|provider TEXT DEFAULT 'claude')" | grep -v "^$" || true)

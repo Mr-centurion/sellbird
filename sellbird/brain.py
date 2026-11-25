@@ -110,6 +110,13 @@ class Brain:
         return self.model
 
     @property
+    def last_latency_ms(self) -> int:
+        """The latency in milliseconds of the latest Ollama response."""
+        if hasattr(self, "ollama") and self.ollama is not None:
+            return getattr(self.ollama, "last_latency_ms", 0)
+        return 0
+
+    @property
     def paused_reason(self) -> str:
         """Why calls are currently being skipped ("" when they aren't)."""
         transport_paused = (

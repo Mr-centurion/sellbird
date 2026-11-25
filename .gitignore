@@ -3,6 +3,8 @@
 *.env
 
 # Data
+data/
+!data/
 data/*
 !data/companies/
 !data/prospects/

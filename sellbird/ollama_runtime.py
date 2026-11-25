@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import re
 import time
 import urllib.parse
@@ -41,7 +42,8 @@ CREATE TABLE IF NOT EXISTS inference_log (
     prompt_tokens INTEGER,
     output_tokens INTEGER,
     latency_ms INTEGER,
-    status TEXT NOT NULL
+    status TEXT NOT NULL,
+    mode TEXT DEFAULT 'real'
 );
 """
 
@@ -92,12 +94,14 @@ class OllamaClient:
         self.host = urllib.parse.urlparse(self.base_url).hostname or "localhost"
         self.model = model.strip() or DEFAULT_MODEL
         self.last_model = self.model
+        self.last_latency_ms = 0
+        self.mode = os.environ.get("SELLBIRD_INFERENCE_MODE", "real").strip() or "real"
         self.num_ctx = int(num_ctx) if num_ctx else DEFAULT_NUM_CTX
         self.db_path = Path(db_path) if db_path is not None else DB_PATH
         self._db_initialized = False
 
     async def _ensure_log_table(self):
-        """Ensure inference_log table exists in the database."""
+        """Ensure inference_log table exists in the database and has mode column."""
         if self._db_initialized:
             return
         import aiosqlite
@@ -106,6 +110,10 @@ class OllamaClient:
         try:
             async with aiosqlite.connect(self.db_path) as db:
                 await db.execute(INIT_INFERENCE_LOG_SQL)
+                async with db.execute("PRAGMA table_info(inference_log)") as cur:
+                    cols = [r[1] for r in await cur.fetchall()]
+                    if "mode" not in cols:
+                        await db.execute("ALTER TABLE inference_log ADD COLUMN mode TEXT DEFAULT 'real'")
                 await db.commit()
             self._db_initialized = True
         except Exception as e:
@@ -120,6 +128,7 @@ class OllamaClient:
         latency_ms: int,
         status: str,
         model: str | None = None,
+        mode: str | None = None,
     ):
         """Record an inference call in the SQLite inference_log table."""
         await self._ensure_log_table()
@@ -128,6 +137,7 @@ class OllamaClient:
         agent = (agent or "").strip() or "brain"
         task = (task or "").strip() or "chat"
         log_model = (model or self.last_model or self.model).strip()
+        log_mode = (mode or getattr(self, "mode", None) or os.environ.get("SELLBIRD_INFERENCE_MODE", "real")).strip() or "real"
         ts = datetime.now(timezone.utc).isoformat()
         try:
             async with aiosqlite.connect(self.db_path) as db:
@@ -135,8 +145,8 @@ class OllamaClient:
                     """
                     INSERT INTO inference_log (
                         ts, agent, task, model, host,
-                        prompt_tokens, output_tokens, latency_ms, status
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        prompt_tokens, output_tokens, latency_ms, status, mode
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         ts,
@@ -148,6 +158,7 @@ class OllamaClient:
                         output_tokens,
                         latency_ms,
                         status,
+                        log_mode,
                     ),
                 )
                 await db.commit()
@@ -204,6 +215,10 @@ class OllamaClient:
             )
 
         return ""
+
+    async def is_reachable(self) -> bool:
+        """Check if Ollama server and configured model are available."""
+        return (await self.preflight()) == ""
 
     async def chat(
         self,
@@ -300,6 +315,7 @@ class OllamaClient:
         status = "ok"
         resp_model = data.get("model") or self.model
         self.last_model = resp_model
+        self.last_latency_ms = latency_ms
         await self.log_inference(
             agent=agent,
             task=task or (session_id or ""),

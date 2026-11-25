@@ -178,5 +178,113 @@
     "subject": "Re: Tech adoption",
     "reply_text": "Hmm. Interesting thought.",
     "expected_label": "unclear"
+  },
+  {
+    "id": "thread-21",
+    "sample_flag": "SAMPLE DATA",
+    "company": "OmniFleet Corp",
+    "contact_name": "Greg Thomas",
+    "subject": "Re: Logistics sync",
+    "reply_text": "Caught me at a good time as our engineering committee is evaluating route optimization platforms this sprint. Mind sending over a deck and your calendar link for Tuesday?",
+    "expected_label": "interested"
+  },
+  {
+    "id": "thread-22",
+    "sample_flag": "SAMPLE DATA",
+    "company": "Savant Systems",
+    "contact_name": "Rachel Adams",
+    "subject": "Re: DORA metrics",
+    "reply_text": "Appreciate you pinging us. We are actually dealing with high deployment cycle times right now. Do you have 10 minutes Wednesday morning to walk through architecture?",
+    "expected_label": "interested"
+  },
+  {
+    "id": "thread-23",
+    "sample_flag": "SAMPLE DATA",
+    "company": "Apex Data Labs",
+    "contact_name": "Kenji Sato",
+    "subject": "Re: Dispatch flow",
+    "reply_text": "We built our own custom pipeline in-house two quarters ago that already handles this across all warehouses, so we are locked into our internal stack.",
+    "expected_label": "objection"
+  },
+  {
+    "id": "thread-24",
+    "sample_flag": "SAMPLE DATA",
+    "company": "Fortress Financial",
+    "contact_name": "Megan Davies",
+    "subject": "Re: Workflow security",
+    "reply_text": "Unless your infrastructure can be deployed entirely on-premises inside our private subnet, our compliance officers will never sign off on onboarding.",
+    "expected_label": "objection"
+  },
+  {
+    "id": "thread-25",
+    "sample_flag": "SAMPLE DATA",
+    "company": "BluePeak Logistics",
+    "contact_name": "Carlos Mendez",
+    "subject": "Re: Fleet telematics",
+    "reply_text": "We are heads-down in our peak holiday shipping blackout period. Ping me again after our Q1 review in March once operational freeze lifts.",
+    "expected_label": "not_now"
+  },
+  {
+    "id": "thread-26",
+    "sample_flag": "SAMPLE DATA",
+    "company": "Aura Health",
+    "contact_name": "Dr. Aris Thorne",
+    "subject": "Re: Patient records",
+    "reply_text": "Our clinical board approved a software freeze during our hospital EHR migration. Resurface this towards late November and we can revisit.",
+    "expected_label": "not_now"
+  },
+  {
+    "id": "thread-27",
+    "sample_flag": "SAMPLE DATA",
+    "company": "Ironclad Metalworks",
+    "contact_name": "Danielle Cooper",
+    "subject": "Re: Supply alerts",
+    "reply_text": "We are completely content with our current vendors and have zero desire or appetite to evaluate anything in this space.",
+    "expected_label": "not_interested"
+  },
+  {
+    "id": "thread-28",
+    "sample_flag": "SAMPLE DATA",
+    "company": "Terraform Energy",
+    "contact_name": "Peter Sterling",
+    "subject": "Re: Operations oversight",
+    "reply_text": "Take me off your mailing lists immediately and scrub my contact details from your CRM database.",
+    "expected_label": "unsubscribe"
+  },
+  {
+    "id": "thread-29",
+    "sample_flag": "SAMPLE DATA",
+    "company": "NexaCloud",
+    "contact_name": "Siddharth Rao",
+    "subject": "Re: Cloud metrics",
+    "reply_text": "I am traveling for customer on-sites across APAC with spotty email connectivity through December 5th. Inquiries will be reviewed upon my return.",
+    "expected_label": "out_of_office"
+  },
+  {
+    "id": "thread-30",
+    "sample_flag": "SAMPLE DATA",
+    "company": "Pioneer Freight",
+    "contact_name": "Hannah Scott",
+    "subject": "Re: Route bottlenecks",
+    "reply_text": "I no longer oversee distribution software procurement. I am looping in Dave Miller from logistics operations who manages vendor evaluations.",
+    "expected_label": "referral"
+  },
+  {
+    "id": "thread-31",
+    "sample_flag": "SAMPLE DATA",
+    "company": "Crestline Health",
+    "contact_name": "Oliver Grant",
+    "subject": "Re: Clinic schedules",
+    "reply_text": "This falls under clinical systems rather than my group. You should forward this proposal directly to Lisa Chen who leads healthtech partnerships.",
+    "expected_label": "referral"
+  },
+  {
+    "id": "thread-32",
+    "sample_flag": "SAMPLE DATA",
+    "company": "Vortex Analytics",
+    "contact_name": "Fiona Gallagher",
+    "subject": "Re: Platform query",
+    "reply_text": "I believe you have the wrong organization. What specific service are you asking about?",
+    "expected_label": "unclear"
   }
 ]

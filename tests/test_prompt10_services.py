@@ -390,7 +390,7 @@ def test_reply_classification_all_8_labels_heuristic():
     with open(threads_path, "r", encoding="utf-8") as f:
         threads = json.load(f)
 
-    assert len(threads) == 20, "Expected exactly 20 sample threads"
+    assert len(threads) == 32, "Expected 32 sample threads"
 
     correct = 0
     seen_labels = set()
@@ -433,18 +433,71 @@ async def test_reply_classification_llm_with_fake_ollama(tmp_path):
         assert res["mode"] == "llm"
 
 
-def test_eval_replies_cli():
+@pytest.mark.asyncio
+async def test_eval_replies_logs_to_inference_log_with_reply_classifier(tmp_path):
+    """Verify that classify_reply logs to inference_log with agent='reply_classifier'."""
+    import aiosqlite
+    db_file = tmp_path / "eval_log.db"
+    state = StateManager(str(db_file))
+    await state.init_db()
+
+    with FakeOllamaServer() as server:
+        brain = Brain(state, BrainConfig(provider="ollama", model="qwen3:1.7b", ollama_url=server.url))
+        res = await classify_reply(
+            "Can we schedule a call next Tuesday?",
+            brain=brain,
+            agent="reply_classifier",
+            allow_fallback=False,
+        )
+        assert res["label"] == "interested"
+        assert res["model"] == "qwen3:1.7b"
+        assert "latency_ms" in res
+
+        # Verify inference_log
+        async with aiosqlite.connect(str(db_file)) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute("SELECT agent, task, model, host, mode FROM inference_log") as cur:
+                rows = [dict(r) for r in await cur.fetchall()]
+        assert len(rows) == 1
+        assert rows[0]["agent"] == "reply_classifier"
+        assert rows[0]["task"] == "classify_reply"
+        assert rows[0]["model"] == "qwen3:1.7b"
+        assert rows[0]["mode"] == "fake"
+
+
+@pytest.mark.asyncio
+async def test_classify_reply_no_fallback_raises_when_ollama_unreachable(tmp_path):
+    """When allow_fallback=False, Ollama outages raise OllamaUnavailable instead of falling back silently."""
+    db_file = tmp_path / "down.db"
+    state = StateManager(str(db_file))
+    await state.init_db()
+    brain = Brain(state, BrainConfig(provider="ollama", model="qwen3:1.7b", ollama_url="http://127.0.0.1:59999"))
+    with pytest.raises(OllamaUnavailable):
+        await classify_reply(
+            "Sounds good, send a demo link",
+            brain=brain,
+            agent="reply_classifier",
+            allow_fallback=False,
+        )
+
+
+def test_eval_replies_cli(tmp_path):
     """Test CLI command `sellbird eval-replies` runs successfully and outputs evaluation."""
+    import os
+    env = os.environ.copy()
+    env["SELLBIRD_HOME"] = str(tmp_path)
     res = subprocess.run(
         [sys.executable, "-m", "sellbird.cli", "eval-replies", "--threads", "data/replies/sample_threads.json"],
         capture_output=True,
         text=True,
         cwd=str(PROJECT_ROOT),
+        env=env,
     )
     assert res.returncode == 0, f"eval-replies failed:\nSTDOUT:\n{res.stdout}\nSTDERR:\n{res.stderr}"
     assert "SELLBIRD REPLY CLASSIFICATION EVALUATION" in res.stdout
     assert "Heuristic Path" in res.stdout
     assert "LLM Model Path" in res.stdout
+    assert "CONFUSION & PER-LABEL ACCURACY SUMMARY" in res.stdout
 
 
 @pytest.mark.asyncio

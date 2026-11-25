@@ -1007,13 +1007,20 @@ async def get_inference():
 
     rows = await query_db(
         "SELECT id, ts, agent, task, model, host, latency_ms, status "
-        "FROM inference_log ORDER BY id DESC LIMIT 10"
+        "FROM inference_log WHERE task != 'usage' AND agent != 'brain' "
+        "AND COALESCE(mode, 'real') = 'real' "
+        "ORDER BY id DESC LIMIT 10"
     )
-    count_rows = await query_db("SELECT COUNT(*) as cnt FROM inference_log")
+    count_rows = await query_db(
+        "SELECT COUNT(*) as cnt FROM inference_log "
+        "WHERE task != 'usage' AND agent != 'brain' AND COALESCE(mode, 'real') = 'real'"
+    )
     total_count = count_rows[0]["cnt"] if count_rows else 0
 
     cloud_rows = await query_db(
-        "SELECT COUNT(*) as cnt FROM inference_log WHERE host NOT IN ('localhost', '127.0.0.1', '::1')"
+        "SELECT COUNT(*) as cnt FROM inference_log "
+        "WHERE task != 'usage' AND agent != 'brain' AND COALESCE(mode, 'real') = 'real' "
+        "AND host NOT IN ('localhost', '127.0.0.1', '::1')"
     )
     cloud_count = cloud_rows[0]["cnt"] if cloud_rows else 0
 
@@ -1175,7 +1182,8 @@ async def get_stats():
         action_count = actions[0]["count"] if actions else 0
 
         state = _state()
-        usage_today = await state.get_usage_today()
+        today_str = date.today().isoformat()
+        usage_today = await state.get_usage_today(today=today_str)
 
         return {
             "prospects": {"total": prospect_total, "by_status": prospect_map},

@@ -571,7 +571,8 @@ MIGRATIONS: list[str] = [
         prompt_tokens INTEGER,
         output_tokens INTEGER,
         latency_ms INTEGER,
-        status TEXT NOT NULL
+        status TEXT NOT NULL,
+        mode TEXT DEFAULT 'real'
     );
     """,
     """
@@ -781,6 +782,9 @@ class StateManager:
                     ("reasoning", "TEXT DEFAULT ''"),
                     ("suggested_next_action", "TEXT DEFAULT ''"),
                     ("mode", "TEXT DEFAULT 'llm'"),
+                ],
+                "inference_log": [
+                    ("mode", "TEXT DEFAULT 'real'"),
                 ],
             }
 
@@ -2796,26 +2800,46 @@ class StateManager:
 
     # ── Usage Tracking ──
 
-    async def get_usage_today(self, provider: str = "ollama") -> int:
+    async def get_usage_today(self, provider: str = "ollama", today: str | None = None) -> int:
         """Brain calls made today."""
-        today_utc = datetime.now(timezone.utc).date().isoformat()
-        today_local = date.today().isoformat()
+        target_day = today or date.today().isoformat()
         async with self._connect() as db:
+            if today is not None:
+                # Explicit date specified (e.g. from dashboard with local date)
+                async with db.execute(
+                    "SELECT COUNT(*) FROM inference_log WHERE task != 'usage' AND date(ts) = ?",
+                    (target_day,),
+                ) as cursor:
+                    row = await cursor.fetchone()
+                    inf_count = (row[0] or 0) if row else 0
+                    if inf_count > 0:
+                        return inf_count
+            else:
+                target_utc = datetime.now(timezone.utc).date().isoformat()
+                async with db.execute(
+                    "SELECT COUNT(*) FROM inference_log WHERE task != 'usage' AND (date(ts) = ? OR date(ts) = ?)",
+                    (target_day, target_utc),
+                ) as cursor:
+                    row = await cursor.fetchone()
+                    inf_count = (row[0] or 0) if row else 0
+                    if inf_count > 0:
+                        return inf_count
             async with db.execute(
-                "SELECT COUNT(*) FROM inference_log WHERE date(ts) = ? OR date(ts) = ?",
-                (today_utc, today_local),
+                "SELECT claude_calls FROM usage_log WHERE date = ?",
+                (target_day,),
             ) as cursor:
                 row = await cursor.fetchone()
                 return (row[0] or 0) if row else 0
 
     async def increment_usage(self, provider: str = "ollama", model: str = ""):
-        ts = datetime.now(timezone.utc).isoformat()
-        log_model = model or provider or "ollama"
+        """Increment daily usage counter in usage_log without polluting inference_log."""
+        today = date.today().isoformat()
         async with self._connect() as db:
             await db.execute(
-                """INSERT INTO inference_log (ts, agent, task, model, host, latency_ms, status)
-                   VALUES (?, 'brain', 'usage', ?, 'localhost', 0, 'ok')""",
-                (ts, log_model),
+                """INSERT INTO usage_log (id, date, claude_calls)
+                   VALUES (?, ?, 1)
+                   ON CONFLICT(date) DO UPDATE SET claude_calls = claude_calls + 1""",
+                (_new_id(), today),
             )
             await db.commit()
 

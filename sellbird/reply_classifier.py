@@ -62,6 +62,9 @@ def classify_reply_heuristic(reply_text: str) -> Dict[str, Any]:
         r"\bnever (contact|email)\b",
         r"\bdelete my (info|data|records)\b",
         r"\bdo not email\b",
+        r"\bscrub (my|our)\b",
+        r"\bpurge\b",
+        r"\bmailing lists?\b",
     ]
     if any(re.search(p, text) for p in unsub_patterns):
         return {
@@ -82,6 +85,10 @@ def classify_reply_heuristic(reply_text: str) -> Dict[str, Any]:
         r"\bon vacation\b",
         r"\blimited access to email\b",
         r"\breturning (in|on)\b",
+        r"\bspotty (email )?connectivity\b",
+        r"\btraveling for\b",
+        r"\bupon my return\b",
+        r"\bon-sites?\b",
     ]
     if any(re.search(p, text) for p in ooo_patterns):
         return {
@@ -102,6 +109,11 @@ def classify_reply_heuristic(reply_text: str) -> Dict[str, Any]:
         r"\btransitioned out\b",
         r"\bloop in\b",
         r"\brefer you to\b",
+        r"\bno longer oversee\b",
+        r"\bpass this over\b",
+        r"\bforward this (proposal|email)?\b",
+        r"\bwho (manages|heads|leads)\b",
+        r"\bfalls under\b",
     ]
     if any(re.search(p, text) for p in ref_patterns):
         return {
@@ -122,6 +134,12 @@ def classify_reply_heuristic(reply_text: str) -> Dict[str, Any]:
         r"\bin a few months\b",
         r"\bmid(dle)? of our\b",
         r"\breach back out\b",
+        r"\bheads[- ]down\b",
+        r"\bblackout period\b",
+        r"\bping me (after|again|in)\b",
+        r"\bresurface this\b",
+        r"\bcan revisit\b",
+        r"\bfreeze lifts\b",
     ]
     if any(re.search(p, text) for p in not_now_patterns):
         return {
@@ -141,6 +159,8 @@ def classify_reply_heuristic(reply_text: str) -> Dict[str, Any]:
         r"\bdo not buy\b",
         r"\bdon't send\b",
         r"\bhandle everything in-house\b",
+        r"\bcompletely content\b",
+        r"\bzero (desire|appetite|interest)\b",
     ]
     if any(re.search(p, text) for p in not_int_patterns):
         return {
@@ -162,6 +182,12 @@ def classify_reply_heuristic(reply_text: str) -> Dict[str, Any]:
         r"\blacks the strict\b",
         r"\bcompliance guidelines\b",
         r"\bmigrating (off|is)\b",
+        r"\bbuilt our (own|custom)\b",
+        r"\binternal stack\b",
+        r"\bproprietary pipeline\b",
+        r"\bnever sign off\b",
+        r"\bcompliance officers?\b",
+        r"\bon-premises\b",
     ]
     if any(re.search(p, text) for p in obj_patterns):
         return {
@@ -179,10 +205,17 @@ def classify_reply_heuristic(reply_text: str) -> Dict[str, Any]:
         r"\bwalkthrough\b",
         r"\bsounds good\b",
         r"\bintro call\b",
+        r"\b(schedule|set up|book)( a)? call\b",
         r"\bshare details\b",
         r"\bexperiencing dispatch\b",
         r"\bhow does\b.*\bwork\b",
         r"\bwould love to see\b",
+        r"\bcalendar link\b",
+        r"\bdeck\b",
+        r"\bmind sending\b",
+        r"\b10 minutes\b",
+        r"\bwalk through\b",
+        r"\bdealing with high\b",
     ]
     if any(re.search(p, text) for p in interested_patterns):
         return {
@@ -208,6 +241,8 @@ async def classify_reply(
     brain: Optional[Brain] = None,
     prospect: Optional[Any] = None,
     state: Optional[StateManager] = None,
+    agent: str = "handler",
+    allow_fallback: bool = True,
 ) -> Dict[str, Any]:
     """Classify reply text into one of 8 labels with confidence and next action."""
     clean_text = reply_text.strip()
@@ -218,10 +253,15 @@ async def classify_reply(
             "reasoning": "Empty reply text received.",
             "suggested_next_action": SUGGESTED_ACTIONS["unclear"],
             "mode": "non-LLM mode",
+            "model": "",
+            "latency_ms": 0,
         }
 
-    # If brain is unavailable, use heuristic non-LLM mode immediately
+    # If brain is unavailable, check allow_fallback
     if brain is None or (hasattr(brain, "unavailable") and brain.unavailable):
+        if not allow_fallback:
+            reason = getattr(brain, "unavailable", "Brain unavailable") if brain else "No Brain instance provided"
+            raise OllamaUnavailable(f"Ollama is unreachable: {reason}")
         res = classify_reply_heuristic(clean_text)
         if state and prospect and hasattr(prospect, "id"):
             await state.save_reply_classification(
@@ -253,7 +293,7 @@ async def classify_reply(
     try:
         data = await brain.think_json(
             prompt=prompt,
-            agent="handler",
+            agent=agent,
             task="classify_reply",
             num_predict=300,
         )
@@ -284,6 +324,8 @@ async def classify_reply(
                 "reasoning": raw_reasoning,
                 "suggested_next_action": action,
                 "mode": "llm",
+                "model": getattr(brain, "last_model", brain.model),
+                "latency_ms": getattr(brain, "last_latency_ms", 0),
             }
 
             if state and prospect and hasattr(prospect, "id"):
@@ -300,7 +342,9 @@ async def classify_reply(
 
         raise ValueError("Invalid JSON reply classification payload")
 
-    except (OllamaUnavailable, Exception) as e:
+    except Exception as e:
+        if not allow_fallback:
+            raise OllamaUnavailable(f"Ollama classification failed: {e}") from e
         logger.info(f"Ollama unavailable for reply classification, falling back to heuristic: {e}")
         res = classify_reply_heuristic(clean_text)
         if state and prospect and hasattr(prospect, "id"):
