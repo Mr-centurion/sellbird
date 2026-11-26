@@ -172,6 +172,7 @@ Comprehensive project documentation is organized below:
 | [Signals & Pipeline](docs/signals-and-pipeline.md) | The 29 buying signals, discovery, enrichment, and verification stages |
 | [Dashboard Guide](docs/dashboard.md) | Overview of each UI screen, prospect scoring breakdown, and Outbox management |
 | [Configuration](docs/configuration.md) | Settings in `sellbird.yaml`, `sellbird.local.yaml`, and environment variables |
+Demo Video: https://youtu.be/ADEbcnWUB1Y
 
 ---
 
